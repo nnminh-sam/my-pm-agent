@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "notes",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [".claude/.notes/serve.mjs"],
+      "port": 4311
+    }
+  ]
+}

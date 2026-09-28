@@ -1,0 +1,80 @@
+{
+  "page": "Playbooks & Lifecycle v2 (PMA-M5 proposal)",
+  "updated": "2026-09-28T14:10:56.906Z",
+  "decisions": {
+    "D6": {
+      "title": "Rules confirmation",
+      "choice": "Once per session per rules version"
+    },
+    "D7": {
+      "title": "Office tools for company work",
+      "choice": "Enable the full rnd plugin"
+    },
+    "D8": {
+      "title": "Where project playbooks live",
+      "choice": "Central, in the playbooks repo"
+    },
+    "D9": {
+      "title": "When a layer changes",
+      "choice": "Warn, adopt each with a diff"
+    }
+  },
+  "sections": {
+    "changes": {
+      "title": "What changed in v2",
+      "text": "Agree with your suggestion"
+    },
+    "summary": {
+      "title": "Summary",
+      "text": "Agree with your suggestion"
+    },
+    "terms": {
+      "title": "Terms",
+      "text": "Agree with your suggestion"
+    },
+    "architecture": {
+      "title": "Architecture",
+      "text": "Agree with your suggestion"
+    },
+    "repo": {
+      "title": "Playbooks repo",
+      "text": "Agree with your suggestion"
+    },
+    "rules": {
+      "title": "Project rules",
+      "text": "Agree with your suggestion"
+    },
+    "environments": {
+      "title": "Environments",
+      "text": "Agree with your suggestion"
+    },
+    "versions": {
+      "title": "Versions and rollback",
+      "text": "Agree with your suggestion"
+    },
+    "company": {
+      "title": "Company work",
+      "text": "Agree with your suggestion"
+    },
+    "status": {
+      "title": "Status in my_pm",
+      "text": "Agree with your suggestion"
+    },
+    "growth": {
+      "title": "How it grows",
+      "text": "Agree with your suggestion"
+    },
+    "morning": {
+      "title": "A morning across projects",
+      "text": "Agree with your suggestion"
+    },
+    "plan": {
+      "title": "Build plan",
+      "text": "Agree with your suggestion"
+    },
+    "scope": {
+      "title": "Out of scope and risks",
+      "text": "Agree with your suggestion"
+    }
+  }
+}

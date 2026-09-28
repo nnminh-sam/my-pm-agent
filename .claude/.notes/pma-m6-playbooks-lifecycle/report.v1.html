@@ -1,0 +1,1143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Playbooks &amp; Lifecycle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+  /* Tokens mirror my_pm's src/app/globals.css so the report reads as part of the app. */
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --fg: #1c1b19;
+    --muted: #74716b;
+    --border: #e6e4df;
+    --accent: #3f51d8;
+    --accent-soft: #eceffd;
+    --danger: #c3342b;
+    --danger-soft: #fcefed;
+    --warn: #9a6200;
+    --warn-soft: #fcf4e2;
+    --ok: #217a45;
+    --ok-soft: #e9f5ee;
+    --code-bg: #f0efeb;
+    --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121211;
+      --surface: #1b1b19;
+      --fg: #ecebe7;
+      --muted: #9b988f;
+      --border: #2d2c29;
+      --accent: #8d9bff;
+      --accent-soft: #23264a;
+      --danger: #ff8b80;
+      --danger-soft: #3a1f1c;
+      --warn: #f0c060;
+      --warn-soft: #36290f;
+      --ok: #7ad69c;
+      --ok-soft: #173123;
+      --code-bg: #171716;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121211;
+    --surface: #1b1b19;
+    --fg: #ecebe7;
+    --muted: #9b988f;
+    --border: #2d2c29;
+    --accent: #8d9bff;
+    --accent-soft: #23264a;
+    --danger: #ff8b80;
+    --danger-soft: #3a1f1c;
+    --warn: #f0c060;
+    --warn-soft: #36290f;
+    --ok: #7ad69c;
+    --ok-soft: #173123;
+    --code-bg: #171716;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    padding-inline: 16px;
+    padding-block: 0 96px;
+  }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .layout {
+    max-width: 1080px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 48px;
+  }
+  @media (min-width: 1040px) {
+    .layout { grid-template-columns: 200px minmax(0, 1fr); }
+  }
+
+  /* ---------- table of contents ---------- */
+  .toc { display: none; }
+  @media (min-width: 1040px) {
+    .toc {
+      display: block;
+      position: sticky;
+      top: env(safe-area-inset-top, 0px);
+      align-self: start;
+      padding-block: 56px 24px;
+      font-size: 13px;
+    }
+  }
+  .toc .eyebrow { margin-bottom: 10px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .toc a {
+    display: block;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 4px 8px;
+    border-radius: 6px;
+  }
+  .toc a:hover { color: var(--fg); background: var(--surface); }
+  .toc .count {
+    float: right;
+    font: 500 11px var(--mono);
+    color: var(--accent);
+  }
+
+  main { min-width: 0; max-width: 760px; padding-block: 56px 0; }
+
+  /* ---------- type ---------- */
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(30px, 5vw, 40px); line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; }
+  h2 { font-size: 24px; line-height: 1.25; font-weight: 650; letter-spacing: -0.015em; }
+  h3 { font-size: 16px; line-height: 1.35; font-weight: 600; }
+  p { margin: 0; max-width: 68ch; }
+  .lede { font-size: 17px; line-height: 1.55; color: var(--fg); max-width: 62ch; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .eyebrow {
+    font: 600 11.5px var(--sans);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; }
+  :not(pre) > code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.05em 0.35em;
+    white-space: nowrap;
+  }
+  pre {
+    margin: 0;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font: 12.5px/1.6 var(--mono);
+    tab-size: 2;
+  }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--accent); }
+  pre .o { color: var(--warn); }
+  pre .g { color: var(--ok); }
+  ul.list, ol.list { margin: 0; padding-left: 1.25em; display: grid; gap: 8px; max-width: 68ch; }
+  ul.list li::marker { color: var(--muted); }
+  ol.list li::marker { color: var(--muted); font: 500 13px var(--mono); }
+
+  /* ---------- page structure ---------- */
+  header.hero { display: grid; gap: 18px; padding-bottom: 40px; border-bottom: 1px solid var(--border); }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); }
+  .meta span { display: inline-flex; align-items: center; gap: 6px; }
+  section.part { display: grid; gap: 18px; padding-block: 40px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+  section.part:last-of-type { border-bottom: none; }
+  .part > .head { display: grid; gap: 6px; }
+  .stack { display: grid; gap: 12px; }
+
+  /* ---------- badges & chips ---------- */
+  .badge {
+    display: inline-flex; align-items: center;
+    font: 500 11px/1 var(--sans);
+    padding: 4px 7px; border-radius: 4px; white-space: nowrap;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  }
+  .badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .badge.danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+  .badge.mono { font-family: var(--mono); }
+
+  /* ---------- hero comparison ---------- */
+  .compare { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 640px) { .compare { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); } }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    display: grid;
+    gap: 12px;
+    align-content: start;
+  }
+  .panel.focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 14px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .check-line { display: grid; grid-template-columns: 14px 1fr; gap: 8px; align-items: start; font-size: 14px; }
+  .dot { width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; border: 2px solid var(--warn); }
+  .dot.done { background: var(--ok); border-color: var(--ok); }
+  .next-line {
+    display: flex; gap: 8px; align-items: baseline;
+    padding-top: 10px; border-top: 1px dashed var(--border); font-size: 14px;
+  }
+  .next-line strong { color: var(--accent); font-weight: 600; }
+
+  /* ---------- tables ---------- */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  th { font: 600 11.5px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  td.nowrap { white-space: nowrap; }
+  tfoot td { font-weight: 600; background: var(--bg); }
+
+  /* ---------- diagram ---------- */
+  .figure { display: grid; gap: 8px; }
+  .figure-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 8px; }
+  .figure-wrap svg { display: block; width: 100%; min-width: 620px; height: auto; }
+  .d-box { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
+  .d-box-accent { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
+  .d-row { fill: var(--bg); stroke: var(--border); stroke-width: 1; }
+  .d-row-accent { fill: var(--accent-soft); stroke: none; }
+  .d-title { fill: var(--fg); font: 600 13.5px var(--sans); }
+  .d-sub { fill: var(--muted); font: 12px var(--sans); }
+  .d-name { fill: var(--fg); font: 500 12px var(--mono); }
+  .d-name-accent { fill: var(--accent); font: 500 12px var(--mono); }
+  .d-desc { fill: var(--muted); font: 12px var(--sans); }
+  .d-label { fill: var(--muted); font: 600 10.5px var(--sans); letter-spacing: 0.08em; }
+  .d-edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+  .d-edge-label { fill: var(--fg); font: 500 12px var(--sans); }
+  .d-head { fill: var(--muted); }
+  figcaption { font-size: 13px; color: var(--muted); max-width: 68ch; }
+
+  /* ---------- stages ---------- */
+  .stages { display: grid; gap: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  .stage-row {
+    display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 12px; align-items: baseline;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 14px;
+  }
+  .stage-row:last-child { border-bottom: none; }
+  .stage-row .name { font: 500 13px var(--mono); color: var(--accent); }
+  .stage-row .checks { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+  .stage-row .principle { font-size: 12.5px; color: var(--muted); text-align: right; }
+  @media (max-width: 560px) {
+    .stage-row { grid-template-columns: 80px minmax(0, 1fr); }
+    .stage-row .principle { grid-column: 2; text-align: left; }
+  }
+
+  /* ---------- growth loop ---------- */
+  .loop { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: step; }
+  .loop li {
+    counter-increment: step;
+    display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start;
+  }
+  .loop li::before {
+    content: counter(step);
+    width: 24px; height: 24px; border-radius: 50%;
+    display: grid; place-items: center;
+    font: 500 12px var(--mono);
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .loop p { max-width: 64ch; }
+
+  /* ---------- callout ---------- */
+  .callout {
+    background: var(--warn-soft);
+    color: var(--fg);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 14px;
+    display: grid; gap: 4px;
+    max-width: 68ch;
+  }
+  .callout strong { color: var(--warn); }
+
+  /* ---------- comments ---------- */
+  .note { display: grid; gap: 6px; margin-top: 4px; }
+  .note label { font-size: 12.5px; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
+  .note .saved { font: 500 11px var(--mono); color: var(--ok); opacity: 0; transition: opacity 0.2s; }
+  .note .saved.show { opacity: 1; }
+  textarea {
+    width: 100%;
+    min-height: 44px;
+    resize: vertical;
+    font: 14px/1.5 var(--sans);
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  textarea:focus { border-style: solid; border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+  textarea.has-text { border-style: solid; border-color: var(--accent); }
+
+  /* ---------- decisions ---------- */
+  .decisions { display: grid; gap: 16px; }
+  fieldset.decision {
+    margin: 0; min-width: 0;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+    padding: 16px 18px; display: grid; gap: 12px;
+  }
+  fieldset.decision legend { padding: 0; float: left; width: 100%; display: grid; gap: 4px; }
+  fieldset.decision legend + * { clear: both; }
+  .decision .qid { font: 500 12px var(--mono); color: var(--accent); }
+  .options { display: grid; gap: 8px; }
+  .option {
+    display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; align-items: start;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--bg);
+  }
+  .option:hover { border-color: var(--muted); }
+  .option input { margin: 3px 0 0; accent-color: var(--accent); }
+  .option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  .option .t { font-weight: 600; font-size: 14px; }
+  .option .d { font-size: 13.5px; color: var(--muted); }
+  .rec { font: 600 10.5px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ok); margin-left: 6px; }
+
+  /* ---------- review bar ---------- */
+  .review-bar {
+    position: fixed;
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 8px 8px 8px 14px;
+    box-shadow: 0 6px 24px rgb(0 0 0 / 0.10);
+    font-size: 13px;
+    max-width: calc(100vw - 32px);
+    z-index: 10;
+  }
+  .review-bar .count { font-variant-numeric: tabular-nums; }
+  .review-bar .count b { color: var(--accent); }
+  button {
+    font: 500 13px var(--sans);
+    border-radius: 8px; padding: 7px 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  button.ghost { background: transparent; }
+  button.danger-armed { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
+  .export {
+    position: fixed; inset: auto 16px calc(72px + env(safe-area-inset-bottom, 0px)) auto;
+    width: min(520px, calc(100vw - 32px));
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 10px 32px rgb(0 0 0 / 0.14);
+    padding: 14px; display: grid; gap: 10px; z-index: 11;
+  }
+  .export textarea { min-height: 220px; font: 12.5px/1.5 var(--mono); border-style: solid; }
+  .export .row { display: flex; gap: 8px; justify-content: space-between; align-items: center; }
+
+  footer.end { padding-block: 32px 0; font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-width: 68ch; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; scroll-behavior: auto !important; }
+  }
+  html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <nav class="toc" aria-label="Contents">
+    <div class="eyebrow">Contents</div>
+    <ol id="toc-list">
+      <li><a href="#summary">Summary</a></li>
+      <li><a href="#today">What exists today</a></li>
+      <li><a href="#concepts">Two concepts</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#playbooks">Playbooks as plugins</a></li>
+      <li><a href="#lifecycle">Lifecycle in my_pm</a></li>
+      <li><a href="#growth">How it grows</a></li>
+      <li><a href="#morning">A morning across projects</a></li>
+      <li><a href="#plan">Build plan</a></li>
+      <li><a href="#decisions">Decisions for you</a></li>
+      <li><a href="#scope">Out of scope &amp; risks</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <div class="eyebrow">Proposal · next milestone PMA-M5</div>
+      <h1>Playbooks &amp; Lifecycle</h1>
+      <p class="lede">
+        One set of SDLC playbooks (rules, skills and hooks, shipped as Claude Code plugins) that every repo
+        can use, plus a lifecycle for each project in my_pm that tracks which stage each milestone is in
+        and tells you what to do next across all your projects.
+      </p>
+      <div class="meta">
+        <span>2026-09-28</span>
+        <span>Project <code>PMA</code> · My PM Agent</span>
+        <span><span class="badge warn">Awaiting your decisions</span></span>
+      </div>
+
+      <div class="compare" aria-label="PMA today compared with a lifecycle view">
+        <div class="panel">
+          <div class="eyebrow">my_pm today</div>
+          <h3>PMA · My PM Agent</h3>
+          <dl class="kv">
+            <dt>Milestones</dt><dd>4 of 4 done</dd>
+            <dt>Tasks</dt><dd>37 done · 1 cancelled</dd>
+            <dt>Scheduled</dt><dd>nothing</dd>
+          </dl>
+          <p class="small muted">Reads as finished.</p>
+        </div>
+        <div class="panel focus">
+          <div class="eyebrow">With a lifecycle</div>
+          <h3>PMA-M3 · Migration to Neon <span class="badge accent mono">release</span></h3>
+          <div class="check-line">
+            <span class="dot" aria-hidden="true"></span>
+            <div>
+              <code>release.migration_paired</code><br>
+              <span class="muted">Migration applied to production in the same cut-over as the deploy; rollback point recorded.</span>
+            </div>
+          </div>
+          <p class="small muted">Added by <code>detector: migrations/</code></p>
+          <div class="next-line"><strong>Next</strong><span>Cut over production: migrate, import and deploy together.</span></div>
+        </div>
+      </div>
+      <p class="small muted">
+        From my notes of 2026-09-27: migration 005 is applied on the Neon development branch only, and production
+        has no tables yet. Task-level “done” hides that nothing has shipped. Closing that gap is the job of this proposal.
+      </p>
+    </header>
+
+    <section class="part" id="summary" data-note="Summary">
+      <div class="head"><h2>Summary</h2></div>
+      <ul class="list">
+        <li><strong>Playbook</strong> is the reusable definition: principles, stages, checks, and the rules, skills and hooks that carry them out. Each one is a Claude Code plugin: a base <code>sdlc</code> playbook plus a personal overlay and a company overlay.</li>
+        <li><strong>Lifecycle</strong> is one project's live state against its playbooks. It lives in my_pm next to projects, milestones and tasks, and is computed by a pure, tested engine like the scheduler.</li>
+        <li>Hooks connect each repo to my_pm. At session start you get a short brief (stage, open checks, next action, rules for this stage). Test runs and repo changes flow back as signals.</li>
+        <li>The lifecycle grows. Detectors add checks when the repo changes shape, retros add project-specific checks, and checks that prove general get promoted into the playbook for every project.</li>
+        <li>Build it in slices. PMA-M5 (lifecycle core in my_pm) is useful on its own: any Claude session can ask “what's next across my projects?”</li>
+      </ul>
+    </section>
+
+    <section class="part" id="today" data-note="What exists today">
+      <div class="head">
+        <h2>What exists today</h2>
+        <p class="muted">What I found in my_pm, your other repos and the current Claude Code docs.</p>
+      </div>
+      <ul class="list">
+        <li><strong>my_pm already answers “what next?” for tasks.</strong> It has the deterministic scheduler, MCP tools and prompts (<code>breakdown_milestone</code>, <code>work_on_task</code>, <code>replan</code>), and priority and deadline inheritance in <code>hierarchy.ts</code>. It has no idea of process stage.</li>
+        <li><strong>You've built this plugin shape before.</strong> <code>rnd-tools</code> is a marketplace with a deterministic engine plus skills, agents and hooks. The playbooks repo can copy its layout, Makefile and evals.</li>
+        <li><strong>The stage skills already exist.</strong> <code>software-engineering-orchestrator</code> has to-spec, grilling, domain-modeling, tdd, implement, code-review and diagnosing-bugs. The playbook wraps them instead of rewriting them.</li>
+        <li><strong>“Workflow” is taken.</strong> In Claude Code a workflow is a JS script that orchestrates subagents (<code>/workflows</code>, and a <code>workflows/</code> folder in plugins). This proposal uses <em>playbook</em> and <em>lifecycle</em> instead. A playbook can still include a Claude Code workflow, for example a review fan-out during verify.</li>
+        <li><strong>Plugins can't ship rules.</strong> A plugin can't load CLAUDE.md or <code>.claude/rules</code> files into context. Rules have to arrive through a hook, a skill, or files copied into the repo (see <a href="#rules">Where rules come from</a>).</li>
+      </ul>
+    </section>
+
+    <section class="part" id="concepts" data-note="Two concepts">
+      <div class="head"><h2>Two concepts</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Term</th><th>What it is</th><th>Where it lives</th></tr></thead>
+          <tbody>
+            <tr><td class="nowrap"><strong>Playbook</strong></td><td>Reusable definition: principles, stages, checks, detectors, plus the rules, skills and hooks that carry them out</td><td>A Claude Code plugin, versioned in git</td></tr>
+            <tr><td class="nowrap"><strong>Lifecycle</strong></td><td>One project's state against its playbooks: each milestone's stage, check status and evidence, the next action</td><td>my_pm (Neon or markdown)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="stack">
+        <h3>Base playbook: stages and their exit checks</h3>
+        <p class="muted small">Every milestone runs the loop. A milestone leaves a stage when its exit checks pass or you waive them with a reason. The principles stay fixed; the checks under them can grow.</p>
+        <div class="stages">
+          <div class="stage-row"><span class="name">idea</span><span class="checks muted">none; moving to spec means committing to it</span><span class="principle"></span></div>
+          <div class="stage-row"><span class="name">spec</span><span class="checks"><code>spec.accepted</code></span><span class="principle">Clarity before code</span></div>
+          <div class="stage-row"><span class="name">design</span><span class="checks"><code>design.decisions_recorded</code></span><span class="principle">Decisions written down</span></div>
+          <div class="stage-row"><span class="name">plan</span><span class="checks"><code>plan.estimated</code> <code>plan.small_tasks</code></span><span class="principle">Small, estimated steps</span></div>
+          <div class="stage-row"><span class="name">build</span><span class="checks"><code>build.tasks_done</code></span><span class="principle">Small, estimated steps</span></div>
+          <div class="stage-row"><span class="name">verify</span><span class="checks"><code>verify.tests</code> <code>verify.review</code> <code>verify.acceptance</code></span><span class="principle">Verified, not assumed</span></div>
+          <div class="stage-row"><span class="name">release</span><span class="checks"><code>release.deployed</code> <code>release.rollback_plan</code></span><span class="principle">Reversible releases</span></div>
+          <div class="stage-row"><span class="name">learn</span><span class="checks"><code>learn.retro</code> <code>learn.time_logged</code></span><span class="principle">Learn and feed back</span></div>
+        </div>
+        <p class="small muted">Check kinds: <strong>auto</strong> is computed from my_pm data (all tasks estimated, all done). <strong>probe</strong> comes from repo signals (test runs). <strong>attest</strong> is recorded by you or an agent, with evidence.</p>
+      </div>
+    </section>
+
+    <section class="part" id="architecture" data-note="Architecture">
+      <div class="head">
+        <h2>Architecture</h2>
+        <p class="muted">Definitions live in git, state lives in my_pm, and hooks carry facts between them.</p>
+      </div>
+      <figure class="figure" style="margin:0">
+        <div class="figure-wrap">
+          <svg viewBox="0 0 760 420" role="img" aria-label="Playbooks repo syncs definitions to my_pm and is enabled per repo; the Claude Code session sends signals to my_pm and receives the brief and MCP tools back.">
+            <defs>
+              <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" class="d-head"/>
+              </marker>
+            </defs>
+
+            <!-- Playbooks repo -->
+            <rect x="20" y="20" width="300" height="150" rx="10" class="d-box"/>
+            <text x="36" y="46" class="d-title">Playbooks repo</text>
+            <text x="36" y="63" class="d-sub">git · plugin marketplace</text>
+            <rect x="36" y="74" width="268" height="24" rx="5" class="d-row"/>
+            <text x="48" y="90" class="d-name">sdlc</text><text x="130" y="90" class="d-desc">base playbook</text>
+            <rect x="36" y="104" width="268" height="24" rx="5" class="d-row"/>
+            <text x="48" y="120" class="d-name">personal</text><text x="130" y="120" class="d-desc">overlay</text>
+            <rect x="36" y="134" width="268" height="24" rx="5" class="d-row"/>
+            <text x="48" y="150" class="d-name">company</text><text x="130" y="150" class="d-desc">overlay · w3 marketplace</text>
+
+            <!-- Session -->
+            <rect x="20" y="250" width="300" height="150" rx="10" class="d-box"/>
+            <text x="36" y="276" class="d-title">Any repo · Claude Code session</text>
+            <rect x="36" y="288" width="268" height="22" rx="5" class="d-row"/>
+            <text x="48" y="303" class="d-name">SessionStart</text><text x="150" y="303" class="d-desc">brief + stage rules</text>
+            <rect x="36" y="316" width="268" height="22" rx="5" class="d-row"/>
+            <text x="48" y="331" class="d-name">PostToolUse</text><text x="150" y="331" class="d-desc">test signals</text>
+            <rect x="36" y="344" width="268" height="22" rx="5" class="d-row"/>
+            <text x="48" y="359" class="d-name">PreToolUse</text><text x="150" y="359" class="d-desc">guards</text>
+            <rect x="36" y="372" width="268" height="22" rx="5" class="d-row"/>
+            <text x="48" y="387" class="d-name">/sdlc:*</text><text x="150" y="387" class="d-desc">next · spec · verify …</text>
+
+            <!-- my_pm -->
+            <rect x="440" y="20" width="300" height="380" rx="10" class="d-box-accent"/>
+            <text x="456" y="46" class="d-title">my_pm</text>
+            <text x="508" y="46" class="d-sub">Vercel + Neon</text>
+
+            <text x="456" y="72" class="d-label">DATA</text>
+            <rect x="456" y="80" width="268" height="24" rx="5" class="d-row"/>
+            <text x="468" y="96" class="d-name">playbooks</text><text x="570" y="96" class="d-desc">synced definitions</text>
+            <rect x="456" y="110" width="268" height="24" rx="5" class="d-row"/>
+            <text x="468" y="126" class="d-name">projects</text><text x="570" y="126" class="d-desc">playbooks · repos</text>
+            <rect x="456" y="140" width="268" height="24" rx="5" class="d-row"/>
+            <text x="468" y="156" class="d-name">milestones</text><text x="570" y="156" class="d-desc">stage · checks</text>
+
+            <text x="456" y="190" class="d-label">ENGINE</text>
+            <rect x="456" y="198" width="268" height="24" rx="5" class="d-row-accent"/>
+            <text x="468" y="214" class="d-name-accent">lifecycle.ts</text><text x="570" y="214" class="d-desc">pure, tested · new</text>
+            <rect x="456" y="228" width="268" height="24" rx="5" class="d-row"/>
+            <text x="468" y="244" class="d-name">scheduler.ts</text><text x="570" y="244" class="d-desc">existing</text>
+
+            <text x="456" y="284" class="d-label">SURFACES</text>
+            <rect x="456" y="292" width="268" height="24" rx="5" class="d-row"/>
+            <text x="468" y="308" class="d-name">MCP</text><text x="570" y="308" class="d-desc">get_next · pass_check</text>
+            <rect x="456" y="322" width="268" height="24" rx="5" class="d-row"/>
+            <text x="468" y="338" class="d-name">HTTP</text><text x="570" y="338" class="d-desc">sync · signals</text>
+            <rect x="456" y="352" width="268" height="24" rx="5" class="d-row"/>
+            <text x="468" y="368" class="d-name">/lifecycle</text><text x="570" y="368" class="d-desc">board page</text>
+
+            <!-- edges -->
+            <path d="M320,92 H436" class="d-edge" marker-end="url(#ah)"/>
+            <text x="380" y="84" text-anchor="middle" class="d-edge-label">sync yaml</text>
+
+            <path d="M170,170 V246" class="d-edge" marker-end="url(#ah)"/>
+            <text x="180" y="212" class="d-edge-label">enabled per repo</text>
+
+            <path d="M440,302 H324" class="d-edge" marker-end="url(#ah)"/>
+            <text x="380" y="294" text-anchor="middle" class="d-edge-label">MCP · brief</text>
+
+            <path d="M320,334 H436" class="d-edge" marker-end="url(#ah)"/>
+            <text x="380" y="352" text-anchor="middle" class="d-edge-label">signals</text>
+          </svg>
+        </div>
+        <figcaption>Each plugin's SessionStart hook syncs its <code>playbook.yaml</code> to my_pm (skipped when the content hash hasn't changed). The session sends signals over HTTP and reads the brief and tools over MCP. my_pm composes base + overlays per project.</figcaption>
+      </figure>
+    </section>
+
+    <section class="part" id="playbooks" data-note="Playbooks as plugins">
+      <div class="head">
+        <h2>Playbooks as plugins</h2>
+        <p class="muted">Covers your first need: workflows made of rules, skills and hooks, reusable across company and personal projects.</p>
+      </div>
+
+      <div class="stack">
+        <h3>Repo layout: <code>~/workspaces/playbooks</code></h3>
+<pre><span class="c"># same shape as rnd-tools</span>
+.claude-plugin/marketplace.json
+plugins/sdlc/
+  .claude-plugin/plugin.json   <span class="c"># userConfig: pm_url, pm_api_key (sensitive)</span>
+  .mcp.json                    <span class="c"># my-pm over HTTP, Bearer ${user_config.pm_api_key}</span>
+  playbook.yaml                <span class="c"># principles, stages, checks, detectors</span>
+  skills/    next status adopt spec design plan build verify release retro
+  agents/    reviewer (sonnet), verifier (haiku)
+  hooks/hooks.json
+  rules/     rule text per stage and per detector
+  scripts/pm-flow              <span class="c"># small Node CLI: repo → project, probes, sync, brief</span>
+plugins/personal/              <span class="c"># overlay: extends sdlc</span>
+<span class="c"># company overlay: in the company marketplace (w3-rk-skills), see decision D2</span></pre>
+      </div>
+
+      <div class="stack">
+        <h3><code>playbook.yaml</code></h3>
+<pre><span class="k">name</span>: sdlc
+<span class="k">version</span>: 1.0.0
+<span class="k">principles</span>:
+  clarity:    No build without an accepted spec
+  verified:   Nothing ships unverified
+  reversible: Every release can be rolled back
+  learn:      Every release feeds back
+<span class="k">stages</span>: [idea, spec, design, plan, build, verify, release, learn]
+<span class="k">checks</span>:
+  spec.accepted:    { stage: spec,    principle: clarity,  kind: attest, skill: spec }
+  plan.estimated:   { stage: plan,    kind: auto }   <span class="c"># all tasks estimated, none > max_task_hours</span>
+  build.tasks_done: { stage: build,   kind: auto }
+  verify.tests:     { stage: verify,  principle: verified, kind: probe }
+  verify.review:    { stage: verify,  principle: verified, kind: attest, skill: verify, task: { estimate: 0.5 } }
+  learn.retro:      { stage: learn,   principle: learn,    kind: attest, skill: retro }
+<span class="k">detectors</span>:
+  - when: { exists: migrations/ }
+    add:
+      release.migration_paired: { stage: release, principle: reversible, kind: attest,
+        text: "Migration applied to prod in the same cut-over as the deploy; rollback point recorded" }
+    rules: [db-migrations]
+<span class="k">guards</span>:
+  code_before_spec: ask        <span class="c"># off | warn | ask</span></pre>
+        <p class="small muted">An overlay says <code>extends: sdlc</code> and adds checks, detectors or rules, for example <code>verify.security_review</code> or <code>release.ticket_linked</code> for company work. A <code>task:</code> on a check means entering its stage creates a real task in my_pm, so the scheduler plans it.</p>
+      </div>
+
+      <div class="stack">
+        <h3>Stage skills wrap what you already have</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Stage</th><th>Skill</th><th>Builds on</th></tr></thead>
+            <tbody>
+              <tr><td>spec</td><td><code>/sdlc:spec</code></td><td>grilling + to-spec; ends with <code>pass_check spec.accepted</code></td></tr>
+              <tr><td>design</td><td><code>/sdlc:design</code></td><td>domain-modeling, ADRs</td></tr>
+              <tr><td>plan</td><td><code>/sdlc:plan</code></td><td>my_pm's <code>breakdown_milestone</code> prompt</td></tr>
+              <tr><td>build</td><td><code>/sdlc:build</code></td><td><code>work_on_task</code> prompt + tdd</td></tr>
+              <tr><td>verify</td><td><code>/sdlc:verify</code></td><td>code-review; optionally a Claude Code workflow that fans out reviewers</td></tr>
+              <tr><td>release</td><td><code>/sdlc:release</code></td><td>walks the open release checks for this project</td></tr>
+              <tr><td>learn</td><td><code>/sdlc:retro</code></td><td><code>get_estimation_stats</code>; records learned checks and rules</td></tr>
+              <tr><td>any</td><td><code>/sdlc:next</code> <code>/sdlc:status</code> <code>/sdlc:adopt</code></td><td>new; thin wrappers over the MCP tools</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">Check the mattpocock-skills LICENSE before copying any of them into the plugin; referencing them by name works without copying.</p>
+      </div>
+
+      <div class="stack" id="rules">
+        <h3>Where rules come from</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Kind</th><th>Example</th><th>Delivered by</th></tr></thead>
+            <tbody>
+              <tr><td>Principles and stage rules</td><td>Build: write the failing test first</td><td>SessionStart brief, only for the current stage</td></tr>
+              <tr><td>Path-scoped stack rules</td><td><code>migrations/**</code>: never edit an applied migration</td><td><code>pm-flow install-rules</code> copies them into <code>.claude/rules/playbook/</code>. In company repos it also adds them to <code>.git/info/exclude</code></td></tr>
+              <tr><td>Hard constraints</td><td>No push to main</td><td>PreToolUse hook: deny or ask</td></tr>
+              <tr><td>Personal preferences</td><td>Writing style, language</td><td><code>~/.claude/rules/</code>, outside the plugin</td></tr>
+              <tr><td>Procedures</td><td>How to write a spec</td><td>Skills</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">Copy the rule files rather than symlinking them. Path-scoped rules symlinked from outside the repo don't load.</p>
+      </div>
+    </section>
+
+    <section class="part" id="lifecycle" data-note="Lifecycle in my_pm">
+      <div class="head">
+        <h2>Lifecycle in my_pm</h2>
+        <p class="muted">Covers your second need: each project's status and what to do next. It follows my_pm's existing architecture: a pure engine with tests, persistence through <code>Repository</code>, and MCP tools.</p>
+      </div>
+
+      <div class="stack">
+        <h3>Schema: migration <code>006</code></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Record</th><th>Field</th><th>Type</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td>project</td><td><code>playbooks</code></td><td class="nowrap">text[]</td><td>Base first, then overlays: <code>{sdlc, personal}</code></td></tr>
+              <tr><td>project</td><td><code>repos</code></td><td class="nowrap">text[]</td><td>Normalized git remote URLs. Hooks map a repo to its project, so company repos need no extra file</td></tr>
+              <tr><td>project</td><td><code>context</code></td><td class="nowrap">personal | company</td><td>Board filter and data-boundary rules (D1)</td></tr>
+              <tr><td>project</td><td><code>lifecycle</code></td><td class="nowrap">jsonb</td><td>Added checks with their source, learned rules, last signals per repo</td></tr>
+              <tr><td>milestone</td><td><code>stage</code></td><td class="nowrap">text</td><td>A stage key from the playbook. <code>status</code> is derived from it</td></tr>
+              <tr><td>milestone</td><td><code>checks</code></td><td class="nowrap">jsonb</td><td>key → { status: open | passed | waived | failed, evidence, at, by }</td></tr>
+              <tr><td>playbooks</td><td>new table</td><td class="nowrap">—</td><td>name, version, extends, definition, hash, synced_at. Markdown backend: <code>playbooks/&lt;name&gt;.yaml</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">Per CLAUDE.md: add the fields to the zod schemas in <code>types.ts</code> (key order is frontmatter order), write the migration, expose them through the patch types in <code>repo.ts</code> and the MCP tools.</p>
+      </div>
+
+      <div class="stack">
+        <h3>MCP tools</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tool</th><th>What it does</th><th>Kind</th></tr></thead>
+            <tbody>
+              <tr><td><code>get_next</code></td><td>Ranked next actions across projects: open checks plus today's scheduled blocks</td><td>read</td></tr>
+              <tr><td><code>get_lifecycle</code></td><td>One project: milestones by stage, checks with their source</td><td>read</td></tr>
+              <tr><td class="nowrap"><code>pass_check</code> · <code>waive_check</code></td><td>Record evidence, or a reason for skipping</td><td>write</td></tr>
+              <tr><td><code>advance_stage</code></td><td>Move a milestone on. Refuses while exit checks are open</td><td>write</td></tr>
+              <tr><td><code>add_check</code></td><td>Project-specific check, from a retro or by hand</td><td>write</td></tr>
+              <tr><td><code>report_signals</code></td><td>Repo facts from hooks: detectors that fired, test results. Also a plain HTTP route</td><td>write</td></tr>
+              <tr><td><code>sync_playbook</code></td><td>Store a playbook definition as name@version. Also a plain HTTP route</td><td>write</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stack">
+        <h3>How <code>get_next</code> ranks work</h3>
+        <ol class="list">
+          <li>Deadline risks, taken from the scheduler's <code>at_risk</code>.</li>
+          <li>Priority, inherited through <code>hierarchy.ts</code>.</li>
+          <li>Finish before starting: at equal priority, release beats verify beats build.</li>
+          <li>Earliest deadline, then code order.</li>
+        </ol>
+        <p class="small muted">It also warns when too many milestones across all projects are in build at once (a WIP limit, default 3). Checks with a <code>task:</code> become tagged tasks, so review and QA land on the schedule next to feature work.</p>
+      </div>
+
+      <div class="stack">
+        <h3>Hooks</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Event</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>SessionStart</td><td><code>pm-flow brief</code>: map the git remote to a project, run the detectors, send signals, print the brief and this stage's rules. 3&nbsp;s timeout; a failure never blocks the session</td></tr>
+              <tr><td>PostToolUse</td><td>After test commands (<code>npm test</code>, <code>vitest</code>, <code>pytest</code>…), record pass or fail for <code>verify.tests</code></td></tr>
+              <tr><td>PreToolUse</td><td>Guards: edits to applied migrations, push to main, code before spec (off, warn or ask per playbook)</td></tr>
+              <tr><td>Stop</td><td>Light reminders: log time on the task in progress; “all M5 tasks done, run /sdlc:verify”</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stack">
+        <h3>Board page</h3>
+        <p><code>/lifecycle</code> shows projects as rows and stages as columns. Milestone cards show their open checks and the next action, with a personal/company filter. The project page gets a one-line stage strip.</p>
+      </div>
+    </section>
+
+    <section class="part" id="growth" data-note="How it grows">
+      <div class="head">
+        <h2>How it grows</h2>
+        <p class="muted">A project's check list comes from four sources, and every check keeps its source, so you can always see why a gate exists.</p>
+      </div>
+      <ol class="loop">
+        <li><p><strong>Playbook.</strong> The base and overlay checks, for example <code>spec.accepted</code> from <code>sdlc@1.0</code>.</p></li>
+        <li><p><strong>Detectors.</strong> When the repo changes shape, checks and rules get added: <code>migrations/</code>, <code>vercel.json</code>, a <code>Dockerfile</code>, an <code>openapi.yaml</code>. Source: <code>detector:migrations</code>.</p></li>
+        <li><p><strong>Retros.</strong> <code>/sdlc:retro</code> turns what went wrong into project checks and rules. Source: <code>learned:PMA-M3</code>.</p></li>
+        <li><p><strong>Promotion.</strong> When a learned check holds across projects, move it into the playbook and bump the version. Every project picks it up at the next sync.</p></li>
+      </ol>
+    </section>
+
+    <section class="part" id="morning" data-note="A morning across projects">
+      <div class="head">
+        <h2>A morning across projects</h2>
+        <p class="muted">Example output. PMA is real; WEB and PAY are made-up projects to show more than one project.</p>
+      </div>
+      <div class="stack">
+        <h3>Opening a session in the my_pm repo</h3>
+<pre><span class="k">[sdlc]</span> PMA · My PM Agent · personal · sdlc@1.0
+  PMA-M3 Migration to Neon · <span class="k">release</span> · 1 open check
+    <span class="o">○</span> release.migration_paired  Migration applied to prod in the same cut-over as the deploy
+  <span class="g">Next:</span> cut over production (migrate + import + deploy together)
+  Rules now: db-migrations: never edit an applied migration; pair migrate with deploy</pre>
+      </div>
+      <div class="stack">
+        <h3><code>/sdlc:next</code> from anywhere</h3>
+<pre>Next across 3 projects · Mon 29 Sep
+
+1  PAY-M2  <span class="k">verify</span>   P1 · company · due Oct 3
+   <span class="o">○</span> verify.security_review              → /sdlc:verify PAY-M2
+2  PMA-M3  <span class="k">release</span>  P2 · personal
+   <span class="o">○</span> release.migration_paired            → cut over production
+3  WEB-M4  <span class="k">spec</span>     P2 · personal
+   <span class="o">○</span> spec.accepted                       → /sdlc:spec WEB-M4
+
+Today  09:00–12:00  PAY-M2-T4  Fix review findings      <span class="c">(gate task from verify.review)</span>
+       13:30–15:00  WEB-M3-T2  Hero section copy
+WIP    1 milestone in build · limit 3</pre>
+      </div>
+    </section>
+
+    <section class="part" id="plan" data-note="Build plan">
+      <div class="head">
+        <h2>Build plan</h2>
+        <p class="muted">Each milestone is useful on its own. Sizes follow my_pm's scale: S ≤ 1 day, M 2–3 days, L 4–5 days, before calibration.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Milestone</th><th>Repo</th><th>Size</th><th>After</th><th>You get</th></tr></thead>
+          <tbody>
+            <tr><td class="nowrap"><strong>PMA-M5</strong> Lifecycle core</td><td>my_pm</td><td>L</td><td>—</td><td><code>get_next</code> from any session; PMA flags the cut-over</td></tr>
+            <tr><td class="nowrap"><strong>PMA-M6</strong> Signals &amp; growth</td><td>my_pm</td><td>M</td><td>M5</td><td>HTTP sync and signals, detectors, learned checks, gate tasks</td></tr>
+            <tr><td class="nowrap"><strong>PLAY-M1</strong> sdlc plugin v0</td><td>playbooks</td><td>M</td><td>M5</td><td>Marketplace, userConfig, <code>.mcp.json</code>, next/status/adopt/retro, SessionStart brief</td></tr>
+            <tr><td class="nowrap"><strong>PLAY-M2</strong> Stage skills</td><td>playbooks</td><td>M</td><td>PLAY-M1</td><td>spec, design, plan, build, verify, release on top of your existing skills</td></tr>
+            <tr><td class="nowrap"><strong>PLAY-M3</strong> Overlays &amp; guards</td><td>playbooks</td><td>M</td><td>PLAY-M1, M6</td><td>Personal and company overlays, PreToolUse guards, <code>install-rules</code></td></tr>
+            <tr><td class="nowrap"><strong>PMA-M7</strong> Lifecycle board</td><td>my_pm</td><td>M</td><td>M5</td><td><code>/lifecycle</code> page, stage strip, statusline</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="stack">
+        <h3>PMA-M5 · Lifecycle core: draft tasks</h3>
+        <p class="small muted">Expected hours are three-point means (o + 4m + p) / 6. The calibrated column applies your history: across 27 finished tasks, actual time was 0.16× the estimate (backend 0.15, test 0.20). Final numbers come from <code>breakdown_milestone</code>.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Task</th><th>Tags</th><th class="num">o / m / p</th><th class="num">Expected</th><th class="num">Calibrated</th><th>After</th></tr></thead>
+            <tbody>
+              <tr><td>T1</td><td>Playbook schema (zod), loader for a built-in <code>sdlc.yaml</code>, base + overlay composition</td><td>backend</td><td class="num">2 / 3 / 5</td><td class="num">3.2 h</td><td class="num">0.5 h</td><td>—</td></tr>
+              <tr><td>T2</td><td>Migration 006 and <code>types.ts</code> fields, on both backends</td><td>backend</td><td class="num">2 / 3 / 5</td><td class="num">3.2 h</td><td class="num">0.5 h</td><td>—</td></tr>
+              <tr><td>T3</td><td><code>repo.ts</code>: stage and check writes (pass, waive, advance) with validation</td><td>backend</td><td class="num">3 / 4 / 6</td><td class="num">4.2 h</td><td class="num">0.6 h</td><td>T2</td></tr>
+              <tr><td>T4</td><td><code>lifecycle.ts</code>: compose checks, auto checks from tasks, next action, cross-project ranking, with tests</td><td>backend, test</td><td class="num">4 / 6 / 10</td><td class="num">6.3 h</td><td class="num">1.0 h</td><td>T1</td></tr>
+              <tr><td>T5</td><td>MCP tools <code>get_next</code>, <code>get_lifecycle</code>, <code>pass_check</code>, <code>waive_check</code>, <code>advance_stage</code>; server instructions</td><td>backend</td><td class="num">2 / 3 / 5</td><td class="num">3.2 h</td><td class="num">0.5 h</td><td>T3, T4</td></tr>
+              <tr><td>T6</td><td>Adopt PMA: set the playbook, backfill stages for M1–M4, confirm the cut-over shows up</td><td>ops</td><td class="num">1 / 1.5 / 3</td><td class="num">1.7 h</td><td class="num">0.3 h</td><td>T5</td></tr>
+              <tr><td>T7</td><td>README section and CLAUDE.md pointers</td><td>docs</td><td class="num">0.5 / 1 / 1.5</td><td class="num">1.0 h</td><td class="num">0.2 h</td><td>T6</td></tr>
+            </tbody>
+            <tfoot>
+              <tr><td></td><td>Total</td><td></td><td></td><td class="num">22.7 h</td><td class="num">≈ 3.5 h</td><td></td></tr>
+            </tfoot>
+          </table>
+        </div>
+        <div class="callout">
+          <strong>Separate finding</strong>
+          <span>Your settings buffer is 1, but you spend about a sixth of your estimated time. The scheduler therefore reserves roughly six times the time you need, so finish dates look much later than they are. That's worth fixing on its own, whatever you decide here.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="part" id="decisions">
+      <div class="head">
+        <h2>Decisions for you</h2>
+        <p class="muted">Pick an option and add a note if you like. Your choices save in this browser as you go.</p>
+      </div>
+      <div class="decisions">
+        <fieldset class="decision" data-decision="D1" data-title="Company data in my_pm">
+          <legend><span class="qid">D1</span><h3>How much company data goes into my_pm?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D1" id="D1a" value="Metadata and links only"><span><span class="t">Metadata and links only<span class="rec">Recommended</span></span><br><span class="d">Codes, stages, check status and links. Specs and ticket content stay in company systems.</span></span></label>
+            <label class="option"><input type="radio" name="D1" id="D1b" value="Everything, same instance"><span><span class="t">Everything, same instance</span><br><span class="d">Simplest, but company content ends up in your personal Neon and Vercel.</span></span></label>
+            <label class="option"><input type="radio" name="D1" id="D1c" value="Separate instance for company work"><span><span class="t">Separate my_pm instance for company work</span><br><span class="d">For example a local file-backed instance. <code>get_next</code> can't rank both worlds together.</span></span></label>
+          </div>
+          <textarea id="D1-note" rows="2" placeholder="Note on D1 (optional)"></textarea>
+        </fieldset>
+
+        <fieldset class="decision" data-decision="D2" data-title="Company overlay location">
+          <legend><span class="qid">D2</span><h3>Where does the company overlay live?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D2" id="D2a" value="Company marketplace (w3-rk-skills)"><span><span class="t">Company marketplace (w3-rk-skills)<span class="rec">Recommended</span></span><br><span class="d">Coworkers can install its skills and hooks without my_pm; its sync hook does nothing when <code>pm_url</code> isn't set.</span></span></label>
+            <label class="option"><input type="radio" name="D2" id="D2b" value="My playbooks repo"><span><span class="t">My playbooks repo</span><br><span class="d">Everything in one place, private to you.</span></span></label>
+          </div>
+          <textarea id="D2-note" rows="2" placeholder="Note on D2 (optional)"></textarea>
+        </fieldset>
+
+        <fieldset class="decision" data-decision="D3" data-title="Guard strictness">
+          <legend><span class="qid">D3</span><h3>How strict should guards be by default?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D3" id="D3a" value="Ask for process guards, deny hard constraints"><span><span class="t">Ask for process guards, deny hard constraints<span class="rec">Recommended</span></span><br><span class="d">Code before spec asks you; editing an applied migration or pushing to main is denied.</span></span></label>
+            <label class="option"><input type="radio" name="D3" id="D3b" value="Warn only"><span><span class="t">Warn only</span><br><span class="d">Nothing is ever blocked; the hook adds a warning to the context.</span></span></label>
+            <label class="option"><input type="radio" name="D3" id="D3c" value="Deny everything"><span><span class="t">Deny everything</span><br><span class="d">Strictest; you waive a check to get past a guard.</span></span></label>
+          </div>
+          <textarea id="D3-note" rows="2" placeholder="Note on D3 (optional)"></textarea>
+        </fieldset>
+
+        <fieldset class="decision" data-decision="D4" data-title="Names">
+          <legend><span class="qid">D4</span><h3>Keep the names “playbook” and “lifecycle”?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D4" id="D4a" value="Playbook + lifecycle"><span><span class="t">Playbook + lifecycle<span class="rec">Recommended</span></span><br><span class="d">Avoids clashing with Claude Code workflows.</span></span></label>
+            <label class="option"><input type="radio" name="D4" id="D4b" value="Other names"><span><span class="t">Other names</span><br><span class="d">Write them in the note.</span></span></label>
+          </div>
+          <textarea id="D4-note" rows="2" placeholder="Note on D4 (optional)"></textarea>
+        </fieldset>
+
+        <fieldset class="decision" data-decision="D5" data-title="Tracking the plugin work">
+          <legend><span class="qid">D5</span><h3>Where do we track the plugin work?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D5" id="D5a" value="New project PLAY"><span><span class="t">New my_pm project <code>PLAY</code><span class="rec">Recommended</span></span><br><span class="d">One project per repo, which is also how <code>repos</code> maps sessions to projects.</span></span></label>
+            <label class="option"><input type="radio" name="D5" id="D5b" value="Milestones under PMA"><span><span class="t">Milestones under PMA</span><br><span class="d">Everything in one project, but the plugin milestones live in another repo.</span></span></label>
+          </div>
+          <textarea id="D5-note" rows="2" placeholder="Note on D5 (optional)"></textarea>
+        </fieldset>
+      </div>
+    </section>
+
+    <section class="part" id="scope" data-note="Out of scope and risks">
+      <div class="head"><h2>Out of scope &amp; risks</h2></div>
+      <ul class="list">
+        <li><strong>No workflow engine.</strong> No BPMN or generic state machines. The engine knows stages and checks and nothing more.</li>
+        <li><strong>No LLM when checks are evaluated.</strong> Evaluation is deterministic and tested. Models do the judgement work: specs, reviews, retros.</li>
+        <li><strong>Nothing written into company repos by default.</strong> Projects are found by git remote. Rules are copied only on request and kept out of git.</li>
+        <li><strong>Risk: slow session start.</strong> The brief has a 3 s timeout, caches the last result, and never blocks the session.</li>
+        <li><strong>Risk: check fatigue.</strong> Keep the base playbook to about a dozen checks. Waiving is one call, but always recorded with a reason.</li>
+        <li><strong>Risk: plugin features change.</strong> Keep the plugin thin and the logic in my_pm, which you control and test.</li>
+      </ul>
+    </section>
+
+    <footer class="end">
+      <div class="eyebrow">How to send me your comments</div>
+      <p>Each section ends with a comment box, and everything you type saves in this browser. Then either say “read my comments” in the chat and I'll read them from the browser pane, or press <strong>Copy for Claude</strong> and paste.</p>
+      <p class="mono small">.claude/.notes/pma-m5-playbooks-lifecycle/report.html</p>
+    </footer>
+  </main>
+</div>
+
+<div class="review-bar" role="region" aria-label="Review notes">
+  <span class="count" id="note-count">No comments yet</span>
+  <button type="button" class="ghost" id="clear-btn">Clear</button>
+  <button type="button" class="primary" id="copy-btn">Copy for Claude</button>
+</div>
+
+<div class="export" id="export" hidden>
+  <div class="row"><strong>Your comments as Markdown</strong><button type="button" class="ghost" id="export-close">Close</button></div>
+  <textarea id="export-text" readonly aria-label="Comments as Markdown"></textarea>
+  <span class="small muted" id="export-hint">Copied to the clipboard.</span>
+</div>
+
+<script>
+(function () {
+  var KEY = "pm-notes/pma-m5-playbooks-lifecycle/v1";
+  // Served by .claude/.notes/serve.mjs, comments are saved to report.comments.json next to this page, where
+  // Claude reads them. Opened any other way (file:, data:), they stay in this browser, or only for this visit.
+  var FILE = /^https?:$/.test(location.protocol) ? location.pathname.replace(/\.html?$/, "") + ".comments.json" : null;
+  var fileOk = false;
+  var state = { sections: {}, decisions: {} };
+  try {
+    var raw = localStorage.getItem(KEY);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      state.sections = parsed.sections || {};
+      state.decisions = parsed.decisions || {};
+    }
+  } catch (e) { /* storage unavailable: comments still work for this visit */ }
+
+  var saveTimer;
+  function persist() {
+    state.updated = new Date().toISOString();
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+    refresh();
+    if (!FILE) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveFile, 400);
+  }
+
+  function saveFile() {
+    fetch(FILE, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fileShape(), null, 2) + "\n" })
+      .then(function (r) { fileOk = r.ok; refresh(); }, function () { fileOk = false; refresh(); });
+  }
+
+  /** What lands in report.comments.json: titles included, so the file reads on its own. */
+  function fileShape() {
+    var sections = {};
+    document.querySelectorAll("section[data-note]").forEach(function (s) {
+      var text = (state.sections[s.id] || "").trim();
+      if (text) sections[s.id] = { title: s.getAttribute("data-note"), text: text };
+    });
+    var decisions = {};
+    document.querySelectorAll("fieldset[data-decision]").forEach(function (fs) {
+      var id = fs.getAttribute("data-decision");
+      var d = state.decisions[id] || {};
+      var note = (d.note || "").trim();
+      if (d.choice || note) decisions[id] = { title: fs.getAttribute("data-title"), choice: d.choice || null, note: note || undefined };
+    });
+    return { page: "Playbooks & Lifecycle (PMA-M5 proposal)", updated: state.updated, decisions: decisions, sections: sections };
+  }
+
+  function autosize(el) {
+    el.style.height = "auto";
+    el.style.height = Math.max(44, el.scrollHeight + 2) + "px";
+    el.classList.toggle("has-text", el.value.trim() !== "");
+  }
+
+  // Comment box at the end of every section that asks for one.
+  document.querySelectorAll("section[data-note]").forEach(function (section) {
+    var id = section.id;
+    var title = section.getAttribute("data-note");
+    var wrap = document.createElement("div");
+    wrap.className = "note";
+    var label = document.createElement("label");
+    label.setAttribute("for", "note-" + id);
+    label.innerHTML = "<span>Your comment on “" + title + "”</span>";
+    var saved = document.createElement("span");
+    saved.className = "saved";
+    saved.textContent = "saved";
+    label.appendChild(saved);
+    var ta = document.createElement("textarea");
+    ta.id = "note-" + id;
+    ta.rows = 2;
+    ta.placeholder = "Agree, disagree, questions, changes…";
+    ta.value = state.sections[id] || "";
+    var timer;
+    ta.addEventListener("input", function () {
+      autosize(ta);
+      state.sections[id] = ta.value;
+      persist();
+      saved.classList.add("show");
+      clearTimeout(timer);
+      timer = setTimeout(function () { saved.classList.remove("show"); }, 1200);
+    });
+    wrap.appendChild(label);
+    wrap.appendChild(ta);
+    section.appendChild(wrap);
+    autosize(ta);
+  });
+
+  // Decisions: radio choice + optional note.
+  document.querySelectorAll("fieldset[data-decision]").forEach(function (fs) {
+    var id = fs.getAttribute("data-decision");
+    var saved = state.decisions[id] || {};
+    fs.querySelectorAll("input[type=radio]").forEach(function (r) {
+      if (r.value === saved.choice) r.checked = true;
+      r.addEventListener("change", function () {
+        state.decisions[id] = Object.assign({}, state.decisions[id], { choice: r.value });
+        persist();
+      });
+    });
+    var ta = fs.querySelector("textarea");
+    ta.value = saved.note || "";
+    autosize(ta);
+    ta.addEventListener("input", function () {
+      autosize(ta);
+      state.decisions[id] = Object.assign({}, state.decisions[id], { note: ta.value });
+      persist();
+    });
+  });
+
+  function markdown() {
+    var lines = ["# Review of “Playbooks & Lifecycle” (PMA-M5 proposal)", ""];
+    var decs = document.querySelectorAll("fieldset[data-decision]");
+    var decLines = [];
+    decs.forEach(function (fs) {
+      var id = fs.getAttribute("data-decision");
+      var d = state.decisions[id] || {};
+      if (!d.choice && !(d.note || "").trim()) return;
+      decLines.push("- **" + id + " " + fs.getAttribute("data-title") + "**: " + (d.choice || "no choice") +
+        ((d.note || "").trim() ? " (note: " + d.note.trim() + ")" : ""));
+    });
+    if (decLines.length) lines.push("## Decisions", "", ...decLines, "");
+    var secLines = [];
+    document.querySelectorAll("section[data-note]").forEach(function (s) {
+      var text = (state.sections[s.id] || "").trim();
+      if (text) secLines.push("### " + s.getAttribute("data-note"), "", text, "");
+    });
+    if (secLines.length) lines.push("## Comments", "", ...secLines);
+    if (!decLines.length && !secLines.length) lines.push("_No comments yet._");
+    return lines.join("\n").trim() + "\n";
+  }
+  // For Claude: read everything with window.reviewNotes() from the browser pane.
+  window.reviewNotes = markdown;
+  window.reviewState = function () { return JSON.parse(JSON.stringify(state)); };
+
+  function counts() {
+    var c = 0, d = 0;
+    Object.keys(state.sections).forEach(function (k) { if ((state.sections[k] || "").trim()) c++; });
+    Object.keys(state.decisions).forEach(function (k) { if (state.decisions[k] && state.decisions[k].choice) d++; });
+    return { comments: c, decisions: d };
+  }
+  var total = document.querySelectorAll("fieldset[data-decision]").length;
+  function refresh() {
+    var n = counts();
+    var el = document.getElementById("note-count");
+    var where = fileOk ? " · saves to <code>" + FILE.split("/").pop() + "</code>" : "";
+    if (!n.comments && !n.decisions) { el.innerHTML = "No comments yet" + where; }
+    else { el.innerHTML = "<b>" + n.comments + "</b> comment" + (n.comments === 1 ? "" : "s") + " · <b>" + n.decisions + "</b>/" + total + " decisions" + where; }
+  }
+  refresh();
+
+  function hydrate() {
+    document.querySelectorAll("section[data-note]").forEach(function (s) {
+      var ta = document.getElementById("note-" + s.id);
+      if (ta) { ta.value = state.sections[s.id] || ""; autosize(ta); }
+    });
+    document.querySelectorAll("fieldset[data-decision]").forEach(function (fs) {
+      var d = state.decisions[fs.getAttribute("data-decision")] || {};
+      fs.querySelectorAll("input[type=radio]").forEach(function (r) { r.checked = r.value === d.choice; });
+      var ta = fs.querySelector("textarea");
+      ta.value = d.note || "";
+      autosize(ta);
+    });
+    refresh();
+  }
+
+  // The comments file, when there is one, wins over this browser's copy.
+  if (FILE) {
+    fetch(FILE, { cache: "no-store" }).then(function (r) {
+      if (r.status === 404) {
+        fileOk = true;
+        var n = counts();
+        if (n.comments || n.decisions) saveFile();
+        refresh();
+        return null;
+      }
+      return r.ok ? r.json() : null;
+    }).then(function (data) {
+      if (!data) return;
+      fileOk = true;
+      state.sections = {};
+      state.decisions = {};
+      Object.keys(data.sections || {}).forEach(function (k) { state.sections[k] = data.sections[k].text || ""; });
+      Object.keys(data.decisions || {}).forEach(function (k) {
+        var d = data.decisions[k];
+        state.decisions[k] = { choice: d.choice || undefined, note: d.note || "" };
+      });
+      state.updated = data.updated;
+      hydrate();
+    }).catch(function () { /* no server: this browser only */ });
+  }
+
+  var exportBox = document.getElementById("export");
+  var exportText = document.getElementById("export-text");
+  var hint = document.getElementById("export-hint");
+  document.getElementById("copy-btn").addEventListener("click", function () {
+    var md = markdown();
+    exportText.value = md;
+    exportBox.hidden = false;
+    var fallback = function () {
+      hint.textContent = "Select all and copy (⌘C), then paste it in the chat.";
+      exportText.focus();
+      exportText.select();
+    };
+    try {
+      navigator.clipboard.writeText(md).then(function () { hint.textContent = "Copied to the clipboard. Paste it in the chat."; }, fallback);
+    } catch (e) { fallback(); }
+  });
+  document.getElementById("export-close").addEventListener("click", function () { exportBox.hidden = true; });
+
+  var clearBtn = document.getElementById("clear-btn");
+  var armed = false, armTimer;
+  clearBtn.addEventListener("click", function () {
+    if (!armed) {
+      armed = true;
+      clearBtn.textContent = "Click again to clear all";
+      clearBtn.classList.add("danger-armed");
+      armTimer = setTimeout(function () { armed = false; clearBtn.textContent = "Clear"; clearBtn.classList.remove("danger-armed"); }, 3000);
+      return;
+    }
+    clearTimeout(armTimer);
+    armed = false;
+    clearBtn.textContent = "Clear";
+    clearBtn.classList.remove("danger-armed");
+    state = { sections: {}, decisions: {} };
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    document.querySelectorAll("textarea").forEach(function (t) { if (t.id !== "export-text") { t.value = ""; autosize(t); } });
+    document.querySelectorAll("input[type=radio]").forEach(function (r) { r.checked = false; });
+    persist();
+  });
+})();
+</script>
+</body>
+</html>

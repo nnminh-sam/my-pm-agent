@@ -1,0 +1,1306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Playbooks &amp; Lifecycle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+  /* Tokens mirror my_pm's src/app/globals.css so the report reads as part of the app. */
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --fg: #1c1b19;
+    --muted: #74716b;
+    --border: #e6e4df;
+    --accent: #3f51d8;
+    --accent-soft: #eceffd;
+    --danger: #c3342b;
+    --danger-soft: #fcefed;
+    --warn: #9a6200;
+    --warn-soft: #fcf4e2;
+    --ok: #217a45;
+    --ok-soft: #e9f5ee;
+    --code-bg: #f0efeb;
+    --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121211;
+      --surface: #1b1b19;
+      --fg: #ecebe7;
+      --muted: #9b988f;
+      --border: #2d2c29;
+      --accent: #8d9bff;
+      --accent-soft: #23264a;
+      --danger: #ff8b80;
+      --danger-soft: #3a1f1c;
+      --warn: #f0c060;
+      --warn-soft: #36290f;
+      --ok: #7ad69c;
+      --ok-soft: #173123;
+      --code-bg: #171716;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121211;
+    --surface: #1b1b19;
+    --fg: #ecebe7;
+    --muted: #9b988f;
+    --border: #2d2c29;
+    --accent: #8d9bff;
+    --accent-soft: #23264a;
+    --danger: #ff8b80;
+    --danger-soft: #3a1f1c;
+    --warn: #f0c060;
+    --warn-soft: #36290f;
+    --ok: #7ad69c;
+    --ok-soft: #173123;
+    --code-bg: #171716;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    padding-inline: 16px;
+    padding-block: 0 96px;
+  }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .layout {
+    max-width: 1080px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 48px;
+  }
+  @media (min-width: 1040px) {
+    .layout { grid-template-columns: 200px minmax(0, 1fr); }
+  }
+
+  /* ---------- table of contents ---------- */
+  .toc { display: none; }
+  @media (min-width: 1040px) {
+    .toc {
+      display: block;
+      position: sticky;
+      top: env(safe-area-inset-top, 0px);
+      align-self: start;
+      padding-block: 56px 24px;
+      font-size: 13px;
+      max-height: 100vh;
+      overflow-y: auto;
+    }
+  }
+  .toc .eyebrow { margin-bottom: 10px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .toc a {
+    display: block;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 4px 8px;
+    border-radius: 6px;
+  }
+  .toc a:hover { color: var(--fg); background: var(--surface); }
+  .toc .new { font: 600 10px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ok); margin-left: 4px; }
+
+  main { min-width: 0; max-width: 760px; padding-block: 56px 0; }
+
+  /* ---------- type ---------- */
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(30px, 5vw, 40px); line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; }
+  h2 { font-size: 24px; line-height: 1.25; font-weight: 650; letter-spacing: -0.015em; }
+  h3 { font-size: 16px; line-height: 1.35; font-weight: 600; }
+  p { margin: 0; max-width: 68ch; }
+  .lede { font-size: 17px; line-height: 1.55; color: var(--fg); max-width: 62ch; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .eyebrow {
+    font: 600 11.5px var(--sans);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; }
+  :not(pre) > code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.05em 0.35em;
+    white-space: nowrap;
+  }
+  pre {
+    margin: 0;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font: 12.5px/1.6 var(--mono);
+    tab-size: 2;
+  }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--accent); }
+  pre .o { color: var(--warn); }
+  pre .g { color: var(--ok); }
+  pre .w { color: var(--danger); }
+  ul.list, ol.list { margin: 0; padding-left: 1.25em; display: grid; gap: 8px; max-width: 68ch; }
+  ul.list li::marker { color: var(--muted); }
+  ol.list li::marker { color: var(--muted); font: 500 13px var(--mono); }
+
+  /* ---------- page structure ---------- */
+  header.hero { display: grid; gap: 18px; padding-bottom: 40px; border-bottom: 1px solid var(--border); }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); align-items: center; }
+  .meta span { display: inline-flex; align-items: center; gap: 6px; }
+  section.part { display: grid; gap: 18px; padding-block: 40px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+  section.part:last-of-type { border-bottom: none; }
+  .part > .head { display: grid; gap: 6px; }
+  .stack { display: grid; gap: 12px; }
+
+  /* ---------- badges & chips ---------- */
+  .badge {
+    display: inline-flex; align-items: center;
+    font: 500 11px/1 var(--sans);
+    padding: 4px 7px; border-radius: 4px; white-space: nowrap;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  }
+  .badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .badge.mono { font-family: var(--mono); }
+
+  /* ---------- environments ---------- */
+  .envs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .env {
+    display: inline-flex; gap: 6px; align-items: center;
+    padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--bg); font: 12px var(--mono); white-space: nowrap;
+  }
+  .env .s { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--warn); flex: none; }
+  .env.done .s { background: var(--ok); border-color: var(--ok); }
+  .env.skip { color: var(--muted); border-style: dashed; }
+  .env.skip .s { border-color: var(--border); }
+  .env .when { color: var(--muted); }
+  .env-arrow { color: var(--muted); font-size: 12px; }
+
+  /* ---------- hero comparison ---------- */
+  .compare { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 640px) { .compare { grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); } }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    display: grid;
+    gap: 12px;
+    align-content: start;
+  }
+  .panel.focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 14px; margin: 0; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .check-line { display: grid; grid-template-columns: 14px 1fr; gap: 8px; align-items: start; font-size: 14px; }
+  .dot { width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; border: 2px solid var(--warn); }
+  .next-line {
+    display: flex; gap: 8px; align-items: baseline;
+    padding-top: 10px; border-top: 1px dashed var(--border); font-size: 14px;
+  }
+  .next-line strong { color: var(--accent); font-weight: 600; }
+
+  /* ---------- tables ---------- */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  th { font: 600 11.5px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  td.nowrap { white-space: nowrap; }
+  tfoot td { font-weight: 600; background: var(--bg); }
+  tr.added td:first-child { box-shadow: inset 3px 0 0 var(--ok); }
+
+  /* ---------- diagram ---------- */
+  .figure { display: grid; gap: 8px; margin: 0; }
+  .figure-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 8px; }
+  .figure-wrap svg { display: block; width: 100%; min-width: 620px; height: auto; }
+  .d-box { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
+  .d-box-accent { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
+  .d-row { fill: var(--bg); stroke: var(--border); stroke-width: 1; }
+  .d-row-accent { fill: var(--accent-soft); stroke: none; }
+  .d-title { fill: var(--fg); font: 600 13.5px var(--sans); }
+  .d-sub { fill: var(--muted); font: 12px var(--sans); }
+  .d-name { fill: var(--fg); font: 500 12px var(--mono); }
+  .d-name-accent { fill: var(--accent); font: 500 12px var(--mono); }
+  .d-desc { fill: var(--muted); font: 12px var(--sans); }
+  .d-label { fill: var(--muted); font: 600 10.5px var(--sans); letter-spacing: 0.08em; }
+  .d-edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+  .d-edge-label { fill: var(--fg); font: 500 12px var(--sans); }
+  .d-head { fill: var(--muted); }
+  figcaption { font-size: 13px; color: var(--muted); max-width: 68ch; }
+
+  /* ---------- stages ---------- */
+  .stages { display: grid; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  .stage-row {
+    display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 12px; align-items: baseline;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 14px;
+  }
+  .stage-row:last-child { border-bottom: none; }
+  .stage-row .name { font: 500 13px var(--mono); color: var(--accent); }
+  .stage-row .checks { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+  .stage-row .principle { font-size: 12.5px; color: var(--muted); text-align: right; }
+  .stage-row.optional { background: var(--ok-soft); }
+  .stage-row.optional .name { color: var(--ok); }
+  @media (max-width: 560px) {
+    .stage-row { grid-template-columns: 80px minmax(0, 1fr); }
+    .stage-row .principle { grid-column: 2; text-align: left; }
+  }
+
+  /* ---------- numbered flows ---------- */
+  .loop { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: step; }
+  .loop li {
+    counter-increment: step;
+    display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start;
+  }
+  .loop li::before {
+    content: counter(step);
+    width: 24px; height: 24px; border-radius: 50%;
+    display: grid; place-items: center;
+    font: 500 12px var(--mono);
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .loop p { max-width: 64ch; }
+
+  /* ---------- callout ---------- */
+  .callout {
+    background: var(--warn-soft);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 14px;
+    display: grid; gap: 4px;
+    max-width: 68ch;
+  }
+  .callout strong { color: var(--warn); }
+  .callout.info { background: var(--accent-soft); }
+  .callout.info strong { color: var(--accent); }
+
+  /* ---------- decided list ---------- */
+  .decided { display: grid; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  .decided > div {
+    display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 4px 10px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 14px;
+  }
+  .decided > div:last-child { border-bottom: none; }
+  .decided .qid { font: 500 12px var(--mono); color: var(--accent); padding-top: 2px; }
+  .decided .t { color: var(--muted); }
+  .decided .c { font-weight: 600; }
+  .decided .n { grid-column: 2; font-size: 13px; color: var(--muted); }
+
+  /* ---------- comments ---------- */
+  .note { display: grid; gap: 6px; margin-top: 4px; }
+  .note label { font-size: 12.5px; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
+  .note .saved { font: 500 11px var(--mono); color: var(--ok); opacity: 0; transition: opacity 0.2s; }
+  .note .saved.show { opacity: 1; }
+  textarea {
+    width: 100%;
+    min-height: 44px;
+    resize: vertical;
+    font: 14px/1.5 var(--sans);
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  textarea:focus { border-style: solid; border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+  textarea.has-text { border-style: solid; border-color: var(--accent); }
+
+  /* ---------- decisions ---------- */
+  .decisions { display: grid; gap: 16px; }
+  fieldset.decision {
+    margin: 0; min-width: 0;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+    padding: 16px 18px; display: grid; gap: 12px;
+  }
+  fieldset.decision legend { padding: 0; float: left; width: 100%; display: grid; gap: 4px; }
+  fieldset.decision legend + * { clear: both; }
+  .decision .qid { font: 500 12px var(--mono); color: var(--accent); }
+  .options { display: grid; gap: 8px; }
+  .option {
+    display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; align-items: start;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--bg);
+  }
+  .option:hover { border-color: var(--muted); }
+  .option input { margin: 3px 0 0; accent-color: var(--accent); }
+  .option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  .option .t { font-weight: 600; font-size: 14px; }
+  .option .d { font-size: 13.5px; color: var(--muted); }
+  .rec { font: 600 10.5px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ok); margin-left: 6px; }
+
+  /* ---------- review bar ---------- */
+  .review-bar {
+    position: fixed;
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 8px 8px 8px 14px;
+    box-shadow: 0 6px 24px rgb(0 0 0 / 0.10);
+    font-size: 13px;
+    max-width: calc(100vw - 32px);
+    z-index: 10;
+  }
+  .review-bar .count { font-variant-numeric: tabular-nums; }
+  .review-bar .count b { color: var(--accent); }
+  button {
+    font: 500 13px var(--sans);
+    border-radius: 8px; padding: 7px 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  button.ghost { background: transparent; }
+  button.danger-armed { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
+  .export {
+    position: fixed; inset: auto 16px calc(72px + env(safe-area-inset-bottom, 0px)) auto;
+    width: min(520px, calc(100vw - 32px));
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 10px 32px rgb(0 0 0 / 0.14);
+    padding: 14px; display: grid; gap: 10px; z-index: 11;
+  }
+  .export textarea { min-height: 220px; font: 12.5px/1.5 var(--mono); border-style: solid; }
+  .export .row { display: flex; gap: 8px; justify-content: space-between; align-items: center; }
+
+  footer.end { padding-block: 32px 0; font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-width: 68ch; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <nav class="toc" aria-label="Contents">
+    <div class="eyebrow">Contents</div>
+    <ol>
+      <li><a href="#changes">What changed in v2</a></li>
+      <li><a href="#summary">Summary</a></li>
+      <li><a href="#terms">Terms</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#repo">Playbooks repo</a></li>
+      <li><a href="#rules">Project rules<span class="new">new</span></a></li>
+      <li><a href="#environments">Environments<span class="new">new</span></a></li>
+      <li><a href="#versions">Versions &amp; rollback<span class="new">new</span></a></li>
+      <li><a href="#company">Company work<span class="new">new</span></a></li>
+      <li><a href="#status">Status in my_pm</a></li>
+      <li><a href="#growth">How it grows</a></li>
+      <li><a href="#morning">A morning across projects</a></li>
+      <li><a href="#plan">Build plan</a></li>
+      <li><a href="#decisions">Decisions</a></li>
+      <li><a href="#scope">Out of scope &amp; risks</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <div class="eyebrow">Proposal v2 · next milestone PMA-M6</div>
+      <h1>Playbooks &amp; Lifecycle</h1>
+      <p class="lede">
+        Every project follows the same lifecycle, from idea through release to learn, with an optional maintain
+        stage. Each project has its own playbook for how it runs that lifecycle: rules, skills, hooks, checks and
+        environments, versioned like code so you can roll back. my_pm tracks each project's status and tells you
+        what to do next across all of them.
+      </p>
+      <div class="meta">
+        <span>2026-09-28</span>
+        <span>Project <code>PMA</code> · My PM Agent</span>
+        <span><span class="badge ok">Accepted · all 9 decisions made</span></span>
+        <span><span class="badge accent">In my_pm: PMA-M6–M8, PLAY-M1–M4</span></span>
+        <span><a href="report.v1.html">v1 with your comments</a></span>
+      </div>
+
+      <div class="compare" aria-label="PMA today compared with its lifecycle status">
+        <div class="panel">
+          <div class="eyebrow">my_pm today</div>
+          <h3>PMA · My PM Agent</h3>
+          <dl class="kv">
+            <dt>Milestones</dt><dd>4 of 4 done</dd>
+            <dt>Tasks</dt><dd>37 done · 1 cancelled</dd>
+            <dt>Scheduled</dt><dd>nothing</dd>
+          </dl>
+          <p class="small muted">Reads as finished.</p>
+        </div>
+        <div class="panel focus">
+          <div class="eyebrow">With a playbook and environments</div>
+          <h3>PMA-M3 · Migration to Neon <span class="badge accent mono">release</span></h3>
+          <div class="envs" aria-label="Environments">
+            <span class="env done"><span class="s"></span>dev <span class="when">09-27</span></span>
+            <span class="env-arrow">→</span>
+            <span class="env"><span class="s"></span>prod <span class="when">no tables yet</span></span>
+          </div>
+          <div class="check-line">
+            <span class="dot" aria-hidden="true"></span>
+            <div>
+              <code>release.migration_paired</code> <span class="badge mono">prod</span><br>
+              <span class="muted">Migration applied in the same cut-over as the deploy; rollback point recorded.</span>
+            </div>
+          </div>
+          <div class="next-line"><strong>Next</strong><span>Cut over prod: migrate, import and deploy together.</span></div>
+        </div>
+      </div>
+      <p class="small muted">
+        From my notes of 2026-09-27: migration 005 is applied on the Neon development branch only, and production has no
+        tables yet. PMA has no staging environment today, so its playbook lists just dev and prod.
+      </p>
+    </header>
+
+    <section class="part" id="changes" data-note="What changed in v2">
+      <div class="head">
+        <h2>What changed in v2</h2>
+        <p class="muted">Your review, and where each point landed. Sections you agreed with as written are unchanged apart from fitting the points below.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>You said</th><th>v2 change</th><th>See</th></tr></thead>
+          <tbody>
+            <tr><td>Playbooks can be updated, so version them like code</td><td>Every layer and project playbook has a semver version, a changelog and git tags. my_pm keeps every version and pins one per project</td><td><a href="#versions">Versions</a></td></tr>
+            <tr><td>Add an optional maintain stage after learn, versioned so you can roll back</td><td>New optional <code>maintain</code> stage: <code>/sdlc:maintain</code> turns retro findings into a new playbook version; <code>/sdlc:rollback</code> pins an older one</td><td><a href="#terms">Terms</a>, <a href="#versions">Versions</a></td></tr>
+            <tr><td>Playbook is per project; lifecycle is the high-level sequence</td><td>Terms switched to your meaning. The per-project state is now called <em>status</em></td><td><a href="#terms">Terms</a></td></tr>
+            <tr><td>Each project is one piece of software, with dev, staging and prod</td><td>Projects declare their software and environments. Release becomes promotion through them, and checks can be scoped to one environment</td><td><a href="#environments">Environments</a></td></tr>
+            <tr><td>Skills and hooks check project rules first and ask you to confirm; warn when a project has none</td><td>Rules check at the start of every <code>/sdlc:*</code> skill, rules in the session brief, and a <code>no_project_rules</code> warning in my_pm</td><td><a href="#rules">Project rules</a></td></tr>
+            <tr><td>Use the mattpocock engineering skills, and let Claude adapt them</td><td>Copied into the plugin (MIT, notice kept) and edited freely; an untouched upstream copy makes new upstream changes easy to review</td><td><a href="#repo">Playbooks repo</a></td></tr>
+            <tr><td>rnd-tools only for its Office tools, for company work</td><td>The company layer enables rnd in company repos; per D7, the full plugin</td><td><a href="#company">Company work</a>, D7</td></tr>
+            <tr><td>D2: company playbook stays private, shared as files or a zip</td><td>One private repo, installed from a local folder; <code>make zip</code> for the work machine. No public host</td><td><a href="#company">Company work</a></td></tr>
+            <tr><td>D1: company data as metadata and links only</td><td>Rule text never goes to my_pm; the brief reads rules from the local repo. Company check text is left out of my_pm</td><td><a href="#company">Company work</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="part" id="summary" data-note="Summary">
+      <div class="head"><h2>Summary</h2></div>
+      <ul class="list">
+        <li><strong>Lifecycle</strong> is the fixed sequence every project follows: idea, spec, design, plan, build, verify, release, learn, and optional maintain. Its principles don't change.</li>
+        <li><strong>Playbook</strong> is one project's way of running the lifecycle: its rules, skills, hooks, checks, conventions and environments. It is built from shared layers (<code>sdlc</code>, <code>personal</code> or <code>company</code>) plus the project's own parts, and it lives in one private git repo.</li>
+        <li><strong>Everything is versioned.</strong> A playbook change is a commit with a version bump and a changelog line. my_pm pins each project to a version, so rolling back is one call.</li>
+        <li><strong>Status</strong> lives in my_pm: each milestone's stage, its checks, and which environments it has reached. A pure, tested engine turns that into ranked next actions and warnings across all projects.</li>
+        <li><strong>Rules come first.</strong> Every stage skill shows the project's rules and asks you to confirm before it acts. A project without rules is flagged until it gets some.</li>
+        <li><strong>Build it in slices.</strong> PMA-M6 (lifecycle core in my_pm) is useful on its own: any Claude session can ask what's next across your projects.</li>
+      </ul>
+    </section>
+
+    <section class="part" id="terms" data-note="Terms">
+      <div class="head">
+        <h2>Terms</h2>
+        <p class="muted">Changed from v1 to match your meaning. In Claude Code a “workflow” is a JS script that orchestrates subagents, so none of these use that word.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Term</th><th>What it is</th><th>Where it lives</th></tr></thead>
+          <tbody>
+            <tr><td class="nowrap"><strong>Lifecycle</strong></td><td>The high-level sequence of stages every project follows, and the principles behind it</td><td>The <code>sdlc</code> layer</td></tr>
+            <tr><td class="nowrap"><strong>Playbook</strong></td><td>One per project: how that project runs the lifecycle. Rules, skills, hooks, checks, conventions, environments</td><td><code>projects/&lt;CODE&gt;/</code> in the private playbooks repo, plus the layers it extends</td></tr>
+            <tr><td class="nowrap"><strong>Layer</strong></td><td>A shared part that playbooks extend: <code>sdlc</code> (base), <code>personal</code>, <code>company</code></td><td><code>layers/</code> in the same repo</td></tr>
+            <tr><td class="nowrap"><strong>Status</strong></td><td>Where each milestone stands: stage, check results, environments reached, the next action</td><td>my_pm</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="stack">
+        <h3>Lifecycle stages and base exit checks</h3>
+        <p class="muted small">A milestone leaves a stage when its exit checks pass or you waive them with a reason. Playbooks add checks; the principles stay fixed.</p>
+        <div class="stages">
+          <div class="stage-row"><span class="name">idea</span><span class="checks muted">none; moving to spec means committing to it</span><span class="principle"></span></div>
+          <div class="stage-row"><span class="name">spec</span><span class="checks"><code>spec.accepted</code></span><span class="principle">Clarity before code</span></div>
+          <div class="stage-row"><span class="name">design</span><span class="checks"><code>design.decisions_recorded</code></span><span class="principle">Decisions written down</span></div>
+          <div class="stage-row"><span class="name">plan</span><span class="checks"><code>plan.estimated</code> <code>plan.small_tasks</code></span><span class="principle">Small, estimated steps</span></div>
+          <div class="stage-row"><span class="name">build</span><span class="checks"><code>build.tasks_done</code></span><span class="principle">Small, estimated steps</span></div>
+          <div class="stage-row"><span class="name">verify</span><span class="checks"><code>verify.tests</code> <code>verify.review</code> <code>verify.acceptance</code></span><span class="principle">Verified, not assumed</span></div>
+          <div class="stage-row"><span class="name">release</span><span class="checks"><code>release.deployed</code> per environment, <code>release.rollback_plan</code> for prod</span><span class="principle">Reversible releases</span></div>
+          <div class="stage-row"><span class="name">learn</span><span class="checks"><code>learn.retro</code> <code>learn.time_logged</code></span><span class="principle">Learn and feed back</span></div>
+          <div class="stage-row optional"><span class="name">maintain</span><span class="checks"><code>maintain.applied</code> <span class="muted small">optional; entered when the retro proposes playbook changes</span></span><span class="principle">Improve the playbook</span></div>
+        </div>
+        <p class="small muted">Check kinds: <strong>auto</strong> is computed from my_pm data. <strong>probe</strong> comes from repo signals such as test runs or deploys. <strong>attest</strong> is recorded by you or an agent, with evidence.</p>
+      </div>
+    </section>
+
+    <section class="part" id="architecture" data-note="Architecture">
+      <div class="head">
+        <h2>Architecture</h2>
+        <p class="muted">Playbooks live in a private git repo, status lives in my_pm, and hooks carry facts between the two.</p>
+      </div>
+      <figure class="figure">
+        <div class="figure-wrap">
+          <svg viewBox="0 0 760 440" role="img" aria-label="The private playbooks repo syncs compiled playbooks to my_pm on commit and is installed on each machine; the Claude Code session sends signals to my_pm and reads status back over MCP.">
+            <defs>
+              <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" class="d-head"/>
+              </marker>
+            </defs>
+
+            <!-- Playbooks repo -->
+            <rect x="20" y="20" width="290" height="150" rx="10" class="d-box"/>
+            <text x="36" y="46" class="d-title">Playbooks repo</text>
+            <text x="36" y="63" class="d-sub">private git · folder or zip</text>
+            <rect x="36" y="74" width="258" height="24" rx="5" class="d-row"/>
+            <text x="48" y="90" class="d-name">layers/</text><text x="124" y="90" class="d-desc">sdlc · personal · company</text>
+            <rect x="36" y="104" width="258" height="24" rx="5" class="d-row"/>
+            <text x="48" y="120" class="d-name">projects/</text><text x="124" y="120" class="d-desc">one playbook each</text>
+            <rect x="36" y="134" width="258" height="24" rx="5" class="d-row"/>
+            <text x="48" y="150" class="d-name">plugins/</text><text x="124" y="150" class="d-desc">sdlc: skills + hooks</text>
+
+            <!-- Session -->
+            <rect x="20" y="270" width="290" height="150" rx="10" class="d-box"/>
+            <text x="36" y="296" class="d-title">Any repo · Claude Code session</text>
+            <rect x="36" y="308" width="258" height="22" rx="5" class="d-row"/>
+            <text x="48" y="323" class="d-name">SessionStart</text><text x="150" y="323" class="d-desc">brief + rules</text>
+            <rect x="36" y="336" width="258" height="22" rx="5" class="d-row"/>
+            <text x="48" y="351" class="d-name">PostToolUse</text><text x="150" y="351" class="d-desc">tests · deploys</text>
+            <rect x="36" y="364" width="258" height="22" rx="5" class="d-row"/>
+            <text x="48" y="379" class="d-name">PreToolUse</text><text x="150" y="379" class="d-desc">guards</text>
+            <rect x="36" y="392" width="258" height="22" rx="5" class="d-row"/>
+            <text x="48" y="407" class="d-name">/sdlc:*</text><text x="150" y="407" class="d-desc">rules check first</text>
+
+            <!-- my_pm -->
+            <rect x="420" y="20" width="320" height="400" rx="10" class="d-box-accent"/>
+            <text x="436" y="46" class="d-title">my_pm</text>
+            <text x="488" y="46" class="d-sub">Vercel + Neon</text>
+
+            <text x="436" y="72" class="d-label">DATA</text>
+            <rect x="436" y="80" width="288" height="24" rx="5" class="d-row"/>
+            <text x="448" y="96" class="d-name">playbook_versions</text><text x="580" y="96" class="d-desc">every version</text>
+            <rect x="436" y="110" width="288" height="24" rx="5" class="d-row"/>
+            <text x="448" y="126" class="d-name">projects</text><text x="580" y="126" class="d-desc">pin · repos · envs</text>
+            <rect x="436" y="140" width="288" height="24" rx="5" class="d-row"/>
+            <text x="448" y="156" class="d-name">milestones</text><text x="580" y="156" class="d-desc">stage · deploys</text>
+
+            <text x="436" y="192" class="d-label">ENGINE</text>
+            <rect x="436" y="200" width="288" height="24" rx="5" class="d-row-accent"/>
+            <text x="448" y="216" class="d-name-accent">lifecycle.ts</text><text x="580" y="216" class="d-desc">pure · new</text>
+            <rect x="436" y="230" width="288" height="24" rx="5" class="d-row"/>
+            <text x="448" y="246" class="d-name">scheduler.ts</text><text x="580" y="246" class="d-desc">existing</text>
+
+            <text x="436" y="286" class="d-label">SURFACES</text>
+            <rect x="436" y="294" width="288" height="24" rx="5" class="d-row"/>
+            <text x="448" y="310" class="d-name">MCP</text><text x="580" y="310" class="d-desc">get_next · pins</text>
+            <rect x="436" y="324" width="288" height="24" rx="5" class="d-row"/>
+            <text x="448" y="340" class="d-name">HTTP</text><text x="580" y="340" class="d-desc">sync · signals</text>
+            <rect x="436" y="354" width="288" height="24" rx="5" class="d-row"/>
+            <text x="448" y="370" class="d-name">/lifecycle</text><text x="580" y="370" class="d-desc">board · warnings</text>
+
+            <!-- edges -->
+            <path d="M310,92 H416" class="d-edge" marker-end="url(#ah)"/>
+            <text x="363" y="84" text-anchor="middle" class="d-edge-label">sync on commit</text>
+
+            <path d="M165,170 V266" class="d-edge" marker-end="url(#ah)"/>
+            <text x="175" y="212" class="d-edge-label">installed from folder</text>
+            <text x="175" y="228" class="d-edge-label">rules read locally</text>
+
+            <path d="M420,320 H314" class="d-edge" marker-end="url(#ah)"/>
+            <text x="365" y="312" text-anchor="middle" class="d-edge-label">MCP · status</text>
+
+            <path d="M310,356 H416" class="d-edge" marker-end="url(#ah)"/>
+            <text x="363" y="374" text-anchor="middle" class="d-edge-label">signals</text>
+          </svg>
+        </div>
+        <figcaption>
+          A git hook in the playbooks repo runs <code>pm-flow sync</code> on commit: it compiles each project playbook
+          (layers + project parts) and sends my_pm the version and its checks. Rule text stays in the repo; the session
+          brief reads it from your local copy. The session sends test and deploy signals over HTTP and reads status over MCP.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="part" id="repo" data-note="Playbooks repo">
+      <div class="head">
+        <h2>Playbooks repo</h2>
+        <p class="muted">Private. Registered on each machine as a local directory marketplace, the way rnd-tools is in your settings today.</p>
+      </div>
+      <div class="stack">
+<pre><span class="c"># ~/workspaces/playbooks · private git repo</span>
+.claude-plugin/marketplace.json
+layers/
+  sdlc/        layer.yaml  rules/  CHANGELOG.md    <span class="c"># the lifecycle: stages, principles, base checks</span>
+  personal/    layer.yaml  rules/  CHANGELOG.md
+  company/     layer.yaml  rules/  CHANGELOG.md    <span class="c"># private; see Company work</span>
+projects/
+  PMA/         playbook.yaml  rules/  CHANGELOG.md <span class="c"># one per project</span>
+  PLAY/        …
+plugins/
+  sdlc/        .claude-plugin/plugin.json  .mcp.json  hooks/  agents/
+               skills/     <span class="c"># /sdlc:* stage skills + adapted mattpocock engineering skills</span>
+               scripts/pm-flow   <span class="c"># Node CLI: compile, sync, brief, rules, zip</span>
+vendor/mattpocock/   <span class="c"># untouched upstream copy at 6654f6b (2026-08-24), MIT</span>
+Makefile             <span class="c"># make check · make release NAME=PMA · make upstream-diff · make zip</span></pre>
+      </div>
+
+      <div class="stack">
+        <h3>A project playbook: <code>projects/PMA/playbook.yaml</code></h3>
+<pre><span class="k">name</span>: PMA
+<span class="k">version</span>: 1.0.0
+<span class="k">software</span>: my_pm                             <span class="c"># the one piece of software this project builds</span>
+<span class="k">repos</span>: [github.com/nnminh-sam/my-pm-agent]
+<span class="k">extends</span>: [sdlc@^1, personal@^1]
+<span class="k">environments</span>:                             <span class="c"># in promotion order; no staging today</span>
+  - { name: dev,  db: neon development, app: localhost:3000 }
+  - { name: prod, db: neon production,  app: vercel production }
+<span class="k">rules</span>:                                    <span class="c"># shown before every stage skill; see Project rules</span>
+  - rules/migrations.md                    <span class="c"># never edit an applied migration; pair migrate with deploy</span>
+  - rules/repository.md                    <span class="c"># all persistence through Repository</span>
+<span class="k">checks</span>:
+  release.migration_paired: { stage: release, env: prod, kind: attest,
+    text: "Migration applied in the same cut-over as the deploy; rollback point recorded" }
+<span class="k">deploy_signals</span>:                           <span class="c"># optional: commands that count as a deploy</span>
+  - { match: "npm run db:migrate", env_from: NEON_BRANCH, map: { development: dev, production: prod } }</pre>
+        <p class="small muted">Layers use the same shape with <code>stages</code>, <code>principles</code>, <code>detectors</code> and <code>guards</code>. <code>pm-flow</code> compiles a playbook with its layers into one definition; my_pm validates it with zod, like every other record.</p>
+      </div>
+
+      <div class="stack">
+        <h3>Stage skills</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Stage</th><th>Skill</th><th>Built from</th></tr></thead>
+            <tbody>
+              <tr><td>spec</td><td><code>/sdlc:spec</code></td><td>grill-with-docs, to-spec</td></tr>
+              <tr><td>design</td><td><code>/sdlc:design</code></td><td>domain-modeling, codebase-design</td></tr>
+              <tr><td>plan</td><td><code>/sdlc:plan</code></td><td>my_pm's <code>breakdown_milestone</code> prompt</td></tr>
+              <tr><td>build</td><td><code>/sdlc:build</code></td><td>tdd, implement; diagnosing-bugs for fixes</td></tr>
+              <tr><td>verify</td><td><code>/sdlc:verify</code></td><td>code-review; optionally a Claude Code workflow that fans out reviewers</td></tr>
+              <tr><td>release</td><td><code>/sdlc:release</code></td><td>new: promotes through the project's environments and records each deploy</td></tr>
+              <tr><td>learn</td><td><code>/sdlc:retro</code></td><td><code>get_estimation_stats</code>; proposes playbook changes</td></tr>
+              <tr class="added"><td>maintain</td><td><code>/sdlc:maintain</code> <code>/sdlc:rollback</code></td><td>new: see <a href="#versions">Versions &amp; rollback</a></td></tr>
+              <tr><td>any</td><td><code>/sdlc:next</code> <code>/sdlc:status</code> <code>/sdlc:adopt</code> <code>/sdlc:rules</code></td><td>new; thin wrappers over the MCP tools and <code>pm-flow</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">
+          The mattpocock engineering skills are MIT-licensed. They're copied into <code>plugins/sdlc/skills/</code> with the
+          license notice, and Claude edits those copies to fit your process, usually during maintain. The untouched copy in
+          <code>vendor/</code> is pinned to a commit; <code>make upstream-diff</code> shows what changed upstream since then,
+          so you can pull improvements in selectively.
+        </p>
+      </div>
+    </section>
+
+    <section class="part" id="rules" data-note="Project rules">
+      <div class="head">
+        <h2>Project rules</h2>
+        <p class="muted">Rules are project scope. Nothing runs on a project without you seeing its rules first.</p>
+      </div>
+      <div class="stack">
+        <h3>What counts as a project's rules</h3>
+        <ul class="list">
+          <li><strong>Repo rules</strong> the repo already has: <code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>.claude/rules/**</code>. my_pm's CLAUDE.md has 7.</li>
+          <li><strong>Playbook rules</strong> in <code>projects/&lt;CODE&gt;/rules/</code>. They cover company repos too, where you don't want files in the repo.</li>
+          <li><strong>Layer rules</strong> for the current stage, from <code>sdlc</code>, <code>personal</code> or <code>company</code>.</li>
+        </ul>
+      </div>
+      <div class="stack">
+        <h3>The check before a skill acts</h3>
+        <ol class="loop">
+          <li><p>The skill runs <code>pm-flow rules --stage &lt;stage&gt;</code>, which lists the rules that apply, with their source and version.</p></li>
+          <li><p>It shows you the list and asks: <strong>Apply these rules</strong>, <strong>Edit rules first</strong>, or <strong>Cancel</strong>. It asks once per session, and again whenever the rules change (D6).</p></li>
+          <li><p>If the project has no playbook rules and no repo rules, the skill stops and offers <code>/sdlc:rules</code> to write some, or to continue with layer rules only.</p></li>
+        </ol>
+        <p class="small muted">Hooks can't hold a conversation, so they surface rules instead: the SessionStart brief lists them, and PreToolUse guards enforce the hard ones.</p>
+      </div>
+      <div class="stack">
+        <h3>Warnings in my_pm</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Warning</th><th>When</th><th>Fix</th></tr></thead>
+            <tbody>
+              <tr><td><code>no_playbook</code></td><td>The project has no pinned playbook</td><td><code>/sdlc:adopt</code></td></tr>
+              <tr><td><code>no_project_rules</code></td><td>No playbook rules, and the last brief found no repo rules</td><td><code>/sdlc:rules</code></td></tr>
+              <tr><td><code>playbook_update</code></td><td>A layer it extends has a newer version</td><td><code>/sdlc:adopt</code> with a diff (D9)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">Warnings are computed, not stored. They show at the top of <code>get_next</code>, in <code>get_overview</code>, and on the board.</p>
+      </div>
+    </section>
+
+    <section class="part" id="environments" data-note="Environments">
+      <div class="head">
+        <h2>Environments</h2>
+        <p class="muted">Each project builds one piece of software and ships it through its own environments.</p>
+      </div>
+      <ul class="list">
+        <li><strong>Declared in the playbook</strong>, in promotion order. The default is dev → staging → prod; PMA uses dev → prod. Each entry can name its database, app target and URL.</li>
+        <li><strong>Release is promotion.</strong> A milestone in release moves through the environments in order. It leaves release once it has reached the last one and that environment's checks pass.</li>
+        <li><strong>Checks can target one environment</strong> (<code>env: prod</code>): rollback plan, migration paired with the deploy, company sign-off.</li>
+        <li><strong>Deploys are recorded per milestone</strong> with evidence such as commit, URL and time, by <code>/sdlc:release</code> or by <code>deploy_signals</code> when a matching command succeeds. Recording prod before staging needs a waiver.</li>
+        <li><strong>Drift is visible.</strong> The board shows what each environment runs, for example “dev is 1 milestone ahead of prod”.</li>
+      </ul>
+      <div class="stack">
+        <h3>PMA today</h3>
+        <div class="envs">
+          <span class="env done"><span class="s"></span>dev <span class="when">M1–M5 · 005 applied 09-27</span></span>
+          <span class="env-arrow">→</span>
+          <span class="env skip"><span class="s"></span>staging <span class="when">not used</span></span>
+          <span class="env-arrow">→</span>
+          <span class="env"><span class="s"></span>prod <span class="when">no tables yet</span></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="part" id="versions" data-note="Versions and rollback">
+      <div class="head">
+        <h2>Versions &amp; rollback</h2>
+        <p class="muted">Playbooks change the way code does: in commits, with versions, and with a way back.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>What</th><th>Version lives in</th><th>How you roll back</th></tr></thead>
+          <tbody>
+            <tr><td>Project playbook</td><td><code>projects/PMA/playbook.yaml</code>, changelog, tag <code>PMA@1.1.0</code></td><td><code>/sdlc:rollback PMA 1.0.0</code> re-pins the old version in my_pm and reverts the commit</td></tr>
+            <tr><td>Layer</td><td><code>layers/sdlc/layer.yaml</code>, tag <code>sdlc@1.2.0</code></td><td>Projects keep their pin until they adopt; revert and release a patch version</td></tr>
+            <tr><td>Plugin (skills, hooks)</td><td><code>plugin.json</code> version, tag <code>plugin-sdlc@0.4.0</code></td><td>Check out the tag in the repo and update the plugin</td></tr>
+            <tr><td>Adapted skills</td><td>Part of the plugin version</td><td>Same as the plugin; <code>make upstream-diff</code> for upstream changes</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="stack">
+        <h3>The maintain stage</h3>
+        <ol class="loop">
+          <li><p><code>/sdlc:retro</code> ends with proposals, for example “spec template needs a data-migration section” or “add a release check for Vercel env vars”.</p></li>
+          <li><p><code>/sdlc:maintain</code> turns the proposals you accept into edits to the project playbook, or to a layer when they're general. Examples: idea conventions, how paths are built, spec schema and format, build tools, the verify process, release checks, or an adapted skill.</p></li>
+          <li><p>Each accepted change becomes one commit with a version bump and a changelog line. <code>pm-flow sync</code> sends the new version to my_pm, and the project is re-pinned (D9 covers layers).</p></li>
+          <li><p>Unhappy with it? <code>/sdlc:rollback</code> pins the previous version and reverts the commit. Past check results stay in the history.</p></li>
+        </ol>
+        <p class="small muted">my_pm never deletes a playbook version, so a pin can always point back. Skills and hooks follow the plugin installed on the machine; checks and rules follow the project's pin.</p>
+      </div>
+    </section>
+
+    <section class="part" id="company" data-note="Company work">
+      <div class="head">
+        <h2>Company work</h2>
+        <p class="muted">Following D1 (metadata and links only) and D2 (private repo, files or zip).</p>
+      </div>
+      <ul class="list">
+        <li><strong>What my_pm stores</strong> for a company project: code, stages, check keys and results, deploys per environment, links to the company tracker and repo. No specs, no rule text, no check descriptions.</li>
+        <li><strong>Where the rules live:</strong> <code>layers/company/</code> and <code>projects/&lt;CODE&gt;/</code> in the private repo. The brief reads them from your local copy.</li>
+        <li><strong>Installing on the work machine:</strong> <code>make zip</code>, unzip, then register the folder as a directory marketplace. No public URL anywhere.</li>
+        <li><strong>Nothing in company git:</strong> projects are matched by git remote, plugins are enabled in <code>.claude/settings.local.json</code>, and any copied rules go in <code>.git/info/exclude</code>.</li>
+      </ul>
+      <div class="stack">
+        <h3>Office tools from rnd-tools</h3>
+        <p>For Word, Excel, PowerPoint and PDF work, the company layer enables the rnd plugin in company repos as it is (D7). rnd-tools needs no change.</p>
+      </div>
+    </section>
+
+    <section class="part" id="status" data-note="Status in my_pm">
+      <div class="head">
+        <h2>Status in my_pm</h2>
+        <p class="muted">Follows my_pm's architecture: a pure engine with tests, persistence through <code>Repository</code>, and MCP tools.</p>
+      </div>
+      <div class="stack">
+        <h3>Schema: migration <code>006</code></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Record</th><th>Field</th><th>Type</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr class="added"><td>project</td><td><code>playbook</code></td><td class="nowrap">text</td><td>Pinned version, <code>PMA@1.0.0</code>. Rollback changes this</td></tr>
+              <tr><td>project</td><td><code>repos</code></td><td class="nowrap">text[]</td><td>Normalized git remotes; hooks map a repo to its project</td></tr>
+              <tr><td>project</td><td><code>context</code></td><td class="nowrap">personal | company</td><td>Board filter; company projects store no text (D1)</td></tr>
+              <tr class="added"><td>project</td><td><code>environments</code></td><td class="nowrap">text[]</td><td>Names in promotion order, from the playbook</td></tr>
+              <tr><td>project</td><td><code>signals</code></td><td class="nowrap">jsonb</td><td>Last detectors, test results and repo rules found, per repo</td></tr>
+              <tr><td>milestone</td><td><code>stage</code></td><td class="nowrap">text</td><td>Lifecycle stage; <code>status</code> is derived from it</td></tr>
+              <tr><td>milestone</td><td><code>checks</code></td><td class="nowrap">jsonb</td><td>key → { status, evidence, at, by }</td></tr>
+              <tr class="added"><td>milestone</td><td><code>deployments</code></td><td class="nowrap">jsonb</td><td>env → { at, ref, url, by }</td></tr>
+              <tr class="added"><td>playbook_versions</td><td>new table</td><td class="nowrap">—</td><td>name, version, compiled definition, hash, synced_at. Never updated or deleted</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">New fields since v1 are marked in green. Per CLAUDE.md: zod schemas in <code>types.ts</code>, the migration, patch types in <code>repo.ts</code>, then the MCP tools.</p>
+      </div>
+      <div class="stack">
+        <h3>MCP tools</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tool</th><th>What it does</th><th>Kind</th></tr></thead>
+            <tbody>
+              <tr><td><code>get_next</code></td><td>Warnings, then ranked next actions across projects, then today's scheduled blocks</td><td>read</td></tr>
+              <tr><td><code>get_lifecycle</code></td><td>One project: milestones by stage, checks with source, environments reached</td><td>read</td></tr>
+              <tr><td class="nowrap"><code>pass_check</code> · <code>waive_check</code></td><td>Record evidence, or a reason for skipping</td><td>write</td></tr>
+              <tr><td><code>advance_stage</code></td><td>Move a milestone on; refuses while exit checks are open</td><td>write</td></tr>
+              <tr class="added"><td><code>record_deployment</code></td><td>A milestone reached an environment, with evidence; enforces promotion order</td><td>write</td></tr>
+              <tr class="added"><td><code>set_playbook_version</code></td><td>Pin a project to a version: adopt, upgrade or roll back</td><td>write</td></tr>
+              <tr><td><code>sync_playbook</code> · <code>report_signals</code></td><td>Used by <code>pm-flow</code> and the hooks; also plain HTTP routes</td><td>write</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="stack">
+        <h3>How <code>get_next</code> ranks work</h3>
+        <ol class="list">
+          <li>Deadline risks, from the scheduler's <code>at_risk</code>.</li>
+          <li>Priority, inherited through <code>hierarchy.ts</code>.</li>
+          <li>Finish before starting: at equal priority, release beats verify beats build.</li>
+          <li>Earliest deadline, then code order.</li>
+        </ol>
+        <p class="small muted">It also warns when too many milestones are in build at once (a WIP limit, default 3). Checks with a <code>task:</code> become tagged tasks, so review and QA land on the schedule next to feature work.</p>
+      </div>
+      <div class="stack">
+        <h3>Hooks</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Event</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>SessionStart</td><td><code>pm-flow brief</code>: match the repo to a project, run detectors, send signals, print status, environments, rules and warnings. 3&nbsp;s timeout; never blocks the session</td></tr>
+              <tr><td>PostToolUse</td><td>Test commands record <code>verify.tests</code>; commands matching <code>deploy_signals</code> record a deploy</td></tr>
+              <tr><td>PreToolUse</td><td>Guards per D3: ask for process guards (code before spec), deny hard constraints (applied migrations, push to main)</td></tr>
+              <tr><td>Stop</td><td>Light reminders: log time; “all M6 tasks done, run /sdlc:verify”</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="part" id="growth" data-note="How it grows">
+      <div class="head">
+        <h2>How it grows</h2>
+        <p class="muted">A project's checks come from four places, and every check keeps its source, so you can see why a gate exists.</p>
+      </div>
+      <ol class="loop">
+        <li><p><strong>Layers.</strong> Base and layer checks, for example <code>spec.accepted</code> from <code>sdlc@1.0</code>.</p></li>
+        <li><p><strong>Detectors.</strong> When the repo changes shape, checks and rules get added: <code>migrations/</code>, <code>vercel.json</code>, a <code>Dockerfile</code>, an <code>openapi.yaml</code>. Source: <code>detector:migrations</code>.</p></li>
+        <li><p><strong>The project playbook.</strong> Checks and rules written for this project, often after a retro. Source: <code>PMA@1.1.0</code>.</p></li>
+        <li><p><strong>Maintain.</strong> Changes that prove general move into a layer as a new version, and every project that adopts it gets them.</p></li>
+      </ol>
+    </section>
+
+    <section class="part" id="morning" data-note="A morning across projects">
+      <div class="head">
+        <h2>A morning across projects</h2>
+        <p class="muted">Example output. PMA is real; WEB and PAY are made-up projects to show more than one.</p>
+      </div>
+      <div class="stack">
+        <h3>Opening a session in the my_pm repo</h3>
+<pre><span class="k">[sdlc]</span> PMA · My PM Agent · personal · playbook PMA@1.0.0 (sdlc 1.0, personal 1.0)
+  Environments  dev <span class="g">●</span> 005 applied 09-27   →   prod <span class="o">○</span> no tables yet
+  PMA-M3 Migration to Neon · <span class="k">release → prod</span> · 1 open check
+    <span class="o">○</span> release.migration_paired (prod)  Migration applied in the same cut-over as the deploy
+  <span class="g">Next:</span> cut over prod (migrate + import + deploy together)
+  Rules  CLAUDE.md (7) · project 2 · sdlc release 3</pre>
+      </div>
+      <div class="stack">
+        <h3>Starting a stage skill</h3>
+<pre>/sdlc:release PMA-M3
+
+Rules for PMA · release · playbook PMA@1.0.0
+  repo      CLAUDE.md, AGENTS.md
+  project   rules/migrations.md: never edit an applied migration; pair migrate with deploy
+            rules/repository.md: all persistence through Repository
+  sdlc      record a rollback point before prod; migrate and deploy in one cut-over
+
+Apply these rules?   Apply · Edit rules first · Cancel</pre>
+      </div>
+      <div class="stack">
+        <h3><code>/sdlc:next</code> from anywhere</h3>
+<pre><span class="w">Warnings</span>
+  WEB   no_project_rules      → /sdlc:rules WEB
+  PAY   playbook_update       company 1.3.0 available (pinned 1.2.0) → /sdlc:adopt PAY
+
+Next across 3 projects · Mon 29 Sep
+1  PAY-M2  <span class="k">verify</span>         P1 · company · due Oct 3
+   <span class="o">○</span> verify.security_review              → /sdlc:verify PAY-M2
+2  PMA-M3  <span class="k">release → prod</span> P2 · personal
+   <span class="o">○</span> release.migration_paired (prod)     → cut over prod
+3  WEB-M4  <span class="k">spec</span>           P2 · personal
+   <span class="o">○</span> spec.accepted                       → /sdlc:spec WEB-M4
+
+Today  09:00–12:00  PAY-M2-T4  Fix review findings      <span class="c">(gate task from verify.review)</span>
+       13:30–15:00  WEB-M3-T2  Hero section copy
+WIP    1 milestone in build · limit 3</pre>
+      </div>
+    </section>
+
+    <section class="part" id="plan" data-note="Build plan">
+      <div class="head">
+        <h2>Build plan</h2>
+        <p class="muted">Each milestone is useful on its own. Sizes follow my_pm's scale: S ≤ 1 day, M 2–3 days, L 4–5 days, before calibration.</p>
+        <div class="callout info">
+          <strong>Created in my_pm on 2026-09-28</strong>
+          <span>PMA-M5 was already taken by “Agent handoff &amp; markdown editing”, so the new milestones are PMA-M6 to M8. Project PLAY holds PLAY-M1 to M4, and PMA-M6's tasks are PMA-M6-T1 to T7.</span>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Milestone</th><th>Repo</th><th>Size</th><th>After</th><th>You get</th></tr></thead>
+          <tbody>
+            <tr><td class="nowrap"><strong>PMA-M6</strong> Lifecycle core</td><td>my_pm</td><td>L</td><td>—</td><td><code>get_next</code>, environments, version pins, warnings; PMA flags the prod cut-over</td></tr>
+            <tr><td class="nowrap"><strong>PMA-M7</strong> Signals &amp; growth</td><td>my_pm</td><td>M</td><td>M6</td><td>Test and deploy signals, detectors, gate tasks</td></tr>
+            <tr><td class="nowrap"><strong>PLAY-M1</strong> Repo &amp; plugin v0</td><td>playbooks</td><td>M</td><td>M6</td><td>Layers/projects layout, <code>pm-flow</code> compile and sync, versions and changelogs, brief, rules check, next/status/adopt/rules</td></tr>
+            <tr><td class="nowrap"><strong>PLAY-M2</strong> Stage skills</td><td>playbooks</td><td>M</td><td>PLAY-M1</td><td>Adapted engineering skills per stage; release through environments</td></tr>
+            <tr class="added"><td class="nowrap"><strong>PLAY-M3</strong> Maintain &amp; rollback</td><td>playbooks, my_pm</td><td>M</td><td>PLAY-M1, M7</td><td><code>/sdlc:maintain</code>, <code>/sdlc:rollback</code>, adopt with a diff, <code>make upstream-diff</code></td></tr>
+            <tr><td class="nowrap"><strong>PLAY-M4</strong> Company layer &amp; guards</td><td>playbooks</td><td>M</td><td>PLAY-M1</td><td>Company layer with rnd enabled, <code>make zip</code> install, guards, <code>install-rules</code></td></tr>
+            <tr><td class="nowrap"><strong>PMA-M8</strong> Lifecycle board</td><td>my_pm</td><td>M</td><td>M6</td><td>Board with environment columns and warnings, statusline</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="stack">
+        <h3>PMA-M6 · Lifecycle core: draft tasks</h3>
+        <p class="small muted">Expected hours are three-point means (o + 4m + p) / 6. Calibrated applies your history: across 27 finished tasks, actual time was 0.16× the estimate (backend 0.15, test 0.20). Final numbers come from <code>breakdown_milestone</code>.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Task</th><th>Tags</th><th class="num">o / m / p</th><th class="num">Expected</th><th class="num">Calibrated</th><th>After</th></tr></thead>
+            <tbody>
+              <tr><td>T1</td><td>Compiled-playbook schema (zod): stages incl. optional maintain, checks with <code>env</code>, detectors, environments</td><td>backend</td><td class="num">2 / 3 / 5</td><td class="num">3.2 h</td><td class="num">0.5 h</td><td>—</td></tr>
+              <tr><td>T2</td><td>Migration 006 and <code>types.ts</code>: pin, repos, context, environments, signals, stage, checks, deployments, <code>playbook_versions</code>; both backends</td><td>backend</td><td class="num">3 / 4 / 6</td><td class="num">4.2 h</td><td class="num">0.6 h</td><td>—</td></tr>
+              <tr><td>T3</td><td><code>repo.ts</code>: pin and roll back versions, stage and check writes, deployments in promotion order, with validation</td><td>backend</td><td class="num">3 / 4 / 6</td><td class="num">4.2 h</td><td class="num">0.6 h</td><td>T2</td></tr>
+              <tr><td>T4</td><td><code>lifecycle.ts</code>: checks from layers and detectors, auto checks, release per environment, warnings, next action and ranking, with tests</td><td>backend, test</td><td class="num">5 / 7 / 12</td><td class="num">7.5 h</td><td class="num">1.1 h</td><td>T1</td></tr>
+              <tr><td>T5</td><td>MCP tools and HTTP sync route; server instructions</td><td>backend</td><td class="num">3 / 4 / 6</td><td class="num">4.2 h</td><td class="num">0.6 h</td><td>T3, T4</td></tr>
+              <tr><td>T6</td><td>Adopt PMA: dev and prod environments, pin a seed playbook, backfill M1–M5, confirm the prod cut-over shows up</td><td>ops</td><td class="num">1 / 1.5 / 3</td><td class="num">1.7 h</td><td class="num">0.3 h</td><td>T5</td></tr>
+              <tr><td>T7</td><td>README section and CLAUDE.md pointers</td><td>docs</td><td class="num">0.5 / 1 / 1.5</td><td class="num">1.0 h</td><td class="num">0.2 h</td><td>T6</td></tr>
+            </tbody>
+            <tfoot>
+              <tr><td></td><td>Total</td><td></td><td></td><td class="num">25.9 h</td><td class="num">≈ 3.9 h</td><td></td></tr>
+            </tfoot>
+          </table>
+        </div>
+        <div class="callout">
+          <strong>Separate finding, unchanged from v1</strong>
+          <span>Your settings buffer is 1, but you spend about a sixth of your estimated time, so the scheduler reserves roughly six times what you need and finish dates look much later than they are.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="part" id="decisions">
+      <div class="head">
+        <h2>Decisions</h2>
+        <p class="muted">All nine are decided: D1–D5 in your review of v1, D6–D9 in your review of v2.</p>
+      </div>
+      <div class="decided" aria-label="Decisions made">
+        <div><span class="qid">D1</span><span><span class="t">Company data in my_pm:</span> <span class="c">Metadata and links only</span></span></div>
+        <div><span class="qid">D2</span><span><span class="t">Company overlay:</span> <span class="c">My private playbooks repo</span></span><span class="n">Maintained privately, shared as files or a zip, never on the public web.</span></div>
+        <div><span class="qid">D3</span><span><span class="t">Guards:</span> <span class="c">Ask for process guards, deny hard constraints</span></span></div>
+        <div><span class="qid">D4</span><span><span class="t">Names:</span> <span class="c">Playbook + lifecycle</span></span><span class="n">With your meaning: playbook per project, lifecycle as the shared sequence.</span></div>
+        <div><span class="qid">D5</span><span><span class="t">Plugin work:</span> <span class="c">New project PLAY</span></span></div>
+      </div>
+
+      <div class="decisions">
+        <fieldset class="decision" data-decision="D6" data-title="Rules confirmation">
+          <legend><span class="qid">D6</span><h3>How often should a skill ask you to confirm the rules?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D6" id="D6a" value="Once per session per rules version"><span><span class="t">Once per session, and again when they change<span class="rec">Recommended</span></span><br><span class="d">The first skill in a session asks. Later ones list the rules and go ahead unless the rules changed.</span></span></label>
+            <label class="option"><input type="radio" name="D6" id="D6b" value="Every skill run"><span><span class="t">Every skill run</span><br><span class="d">Strictest. Several prompts in a busy session.</span></span></label>
+            <label class="option"><input type="radio" name="D6" id="D6c" value="Once per rules version"><span><span class="t">Only when the rules change</span><br><span class="d">Fewest prompts. Confirmation carries across sessions until the rules' hash changes.</span></span></label>
+          </div>
+          <textarea id="D6-note" rows="2" placeholder="Note on D6 (optional)"></textarea>
+        </fieldset>
+
+        <fieldset class="decision" data-decision="D7" data-title="Office tools for company work">
+          <legend><span class="qid">D7</span><h3>How should the company layer get rnd's Office tools?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D7" id="D7a" value="Split rnd-tools: rnd-office plugin"><span><span class="t">Split rnd-tools: add an <code>rnd-office</code> plugin<span class="rec">Recommended</span></span><br><span class="d">Same engine, Office skills only (setup, ask, show, analyze, report, deck, verify). The company layer enables just that.</span></span></label>
+            <label class="option"><input type="radio" name="D7" id="D7b" value="Enable the full rnd plugin"><span><span class="t">Enable the full rnd plugin in company repos</span><br><span class="d">No change to rnd-tools; the research skills come along too.</span></span></label>
+          </div>
+          <textarea id="D7-note" rows="2" placeholder="Note on D7 (optional)"></textarea>
+        </fieldset>
+
+        <fieldset class="decision" data-decision="D8" data-title="Where project playbooks live">
+          <legend><span class="qid">D8</span><h3>Where do project playbooks live?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D8" id="D8a" value="Central, in the playbooks repo"><span><span class="t">All in the private playbooks repo, under <code>projects/</code><span class="rec">Recommended</span></span><br><span class="d">One place and one version history; company repos stay untouched.</span></span></label>
+            <label class="option"><input type="radio" name="D8" id="D8b" value="Personal in their repo, company central"><span><span class="t">Personal ones in their own repo, company ones central</span><br><span class="d">A personal playbook versions with its code; two places to look.</span></span></label>
+          </div>
+          <textarea id="D8-note" rows="2" placeholder="Note on D8 (optional)"></textarea>
+        </fieldset>
+
+        <fieldset class="decision" data-decision="D9" data-title="When a layer changes">
+          <legend><span class="qid">D9</span><h3>When a shared layer gets a new version, what happens to projects?</h3></legend>
+          <div class="options">
+            <label class="option"><input type="radio" name="D9" id="D9a" value="Warn, adopt each with a diff"><span><span class="t">Warn, then adopt each project with a diff<span class="rec">Recommended</span></span><br><span class="d">Projects keep their pin and show <code>playbook_update</code>. <code>/sdlc:adopt</code> shows which checks and rules change before re-pinning.</span></span></label>
+            <label class="option"><input type="radio" name="D9" id="D9b" value="Adopt automatically"><span><span class="t">Adopt automatically</span><br><span class="d">Every project moves on the next sync; roll back the ones you're unhappy with.</span></span></label>
+          </div>
+          <textarea id="D9-note" rows="2" placeholder="Note on D9 (optional)"></textarea>
+        </fieldset>
+      </div>
+    </section>
+
+    <section class="part" id="scope" data-note="Out of scope and risks">
+      <div class="head"><h2>Out of scope &amp; risks</h2></div>
+      <ul class="list">
+        <li><strong>No workflow engine.</strong> No BPMN or generic state machines. The engine knows stages, checks and environments, nothing more.</li>
+        <li><strong>No LLM when checks are evaluated.</strong> Evaluation is deterministic and tested. Models do the judgement work: specs, reviews, retros, playbook proposals.</li>
+        <li><strong>No deploy automation.</strong> The release skill records and checks deploys; it doesn't run your pipeline.</li>
+        <li><strong>Nothing written into company repos by default.</strong> Projects are matched by git remote; copied rules are excluded from git.</li>
+        <li><strong>Risk: too many prompts.</strong> Rule confirmations and guards can pile up. D6 and D3 keep them in check.</li>
+        <li><strong>Risk: adapted skills drift from upstream.</strong> <code>make upstream-diff</code> keeps the gap visible.</li>
+        <li><strong>Risk: slow session start.</strong> The brief has a 3 s timeout, caches its last result and never blocks.</li>
+        <li><strong>Risk: plugin features change.</strong> The plugin stays thin; the logic lives in my_pm and <code>pm-flow</code>, which you control and test.</li>
+      </ul>
+    </section>
+
+    <footer class="end">
+      <div class="eyebrow">How to send me your comments</div>
+      <p>Each section ends with a comment box, and the four open decisions have options and notes. Everything saves to <code>report.comments.json</code> as you type. Say “read my comments” in the chat when you're done, or press <strong>Copy for Claude</strong> and paste.</p>
+      <p>Your v1 review is kept in <a href="report.v1.html">report.v1.html</a> and <code>report.v1.comments.json</code>.</p>
+      <p class="mono small">.claude/.notes/pma-m6-playbooks-lifecycle/report.html · v2</p>
+    </footer>
+  </main>
+</div>
+
+<div class="review-bar" role="region" aria-label="Review notes">
+  <span class="count" id="note-count">No comments yet</span>
+  <button type="button" class="ghost" id="clear-btn">Clear</button>
+  <button type="button" class="primary" id="copy-btn">Copy for Claude</button>
+</div>
+
+<div class="export" id="export" hidden>
+  <div class="row"><strong>Your comments as Markdown</strong><button type="button" class="ghost" id="export-close">Close</button></div>
+  <textarea id="export-text" readonly aria-label="Comments as Markdown"></textarea>
+  <span class="small muted" id="export-hint">Copied to the clipboard.</span>
+</div>
+
+<script>
+(function () {
+  var KEY = "pm-notes/pma-m6-playbooks-lifecycle/v2";
+  var PAGE = "Playbooks & Lifecycle v2 (PMA-M6 proposal)";
+  // Served by .claude/.notes/serve.mjs, comments are saved to report.comments.json next to this page, where
+  // Claude reads them. Opened any other way (file:, data:), they stay in this browser, or only for this visit.
+  var FILE = /^https?:$/.test(location.protocol) ? location.pathname.replace(/\.html?$/, "") + ".comments.json" : null;
+  var fileOk = false;
+  var state = { sections: {}, decisions: {} };
+  try {
+    var raw = localStorage.getItem(KEY);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      state.sections = parsed.sections || {};
+      state.decisions = parsed.decisions || {};
+    }
+  } catch (e) { /* storage unavailable: comments still work for this visit */ }
+
+  var saveTimer;
+  function persist() {
+    state.updated = new Date().toISOString();
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+    refresh();
+    if (!FILE) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveFile, 400);
+  }
+
+  function saveFile() {
+    fetch(FILE, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fileShape(), null, 2) + "\n" })
+      .then(function (r) { fileOk = r.ok; refresh(); }, function () { fileOk = false; refresh(); });
+  }
+
+  /** What lands in report.comments.json: titles included, so the file reads on its own. */
+  function fileShape() {
+    var sections = {};
+    document.querySelectorAll("section[data-note]").forEach(function (s) {
+      var text = (state.sections[s.id] || "").trim();
+      if (text) sections[s.id] = { title: s.getAttribute("data-note"), text: text };
+    });
+    var decisions = {};
+    document.querySelectorAll("fieldset[data-decision]").forEach(function (fs) {
+      var id = fs.getAttribute("data-decision");
+      var d = state.decisions[id] || {};
+      var note = (d.note || "").trim();
+      if (d.choice || note) decisions[id] = { title: fs.getAttribute("data-title"), choice: d.choice || null, note: note || undefined };
+    });
+    return { page: PAGE, updated: state.updated, decisions: decisions, sections: sections };
+  }
+
+  function autosize(el) {
+    el.style.height = "auto";
+    el.style.height = Math.max(44, el.scrollHeight + 2) + "px";
+    el.classList.toggle("has-text", el.value.trim() !== "");
+  }
+
+  // Comment box at the end of every section that asks for one.
+  document.querySelectorAll("section[data-note]").forEach(function (section) {
+    var id = section.id;
+    var title = section.getAttribute("data-note");
+    var wrap = document.createElement("div");
+    wrap.className = "note";
+    var label = document.createElement("label");
+    label.setAttribute("for", "note-" + id);
+    label.innerHTML = "<span>Your comment on “" + title + "”</span>";
+    var saved = document.createElement("span");
+    saved.className = "saved";
+    saved.textContent = "saved";
+    label.appendChild(saved);
+    var ta = document.createElement("textarea");
+    ta.id = "note-" + id;
+    ta.rows = 2;
+    ta.placeholder = "Agree, disagree, questions, changes…";
+    ta.value = state.sections[id] || "";
+    var timer;
+    ta.addEventListener("input", function () {
+      autosize(ta);
+      state.sections[id] = ta.value;
+      persist();
+      saved.classList.add("show");
+      clearTimeout(timer);
+      timer = setTimeout(function () { saved.classList.remove("show"); }, 1200);
+    });
+    wrap.appendChild(label);
+    wrap.appendChild(ta);
+    section.appendChild(wrap);
+    autosize(ta);
+  });
+
+  // Decisions: radio choice + optional note.
+  document.querySelectorAll("fieldset[data-decision]").forEach(function (fs) {
+    var id = fs.getAttribute("data-decision");
+    var saved = state.decisions[id] || {};
+    fs.querySelectorAll("input[type=radio]").forEach(function (r) {
+      if (r.value === saved.choice) r.checked = true;
+      r.addEventListener("change", function () {
+        state.decisions[id] = Object.assign({}, state.decisions[id], { choice: r.value });
+        persist();
+      });
+    });
+    var ta = fs.querySelector("textarea");
+    ta.value = saved.note || "";
+    autosize(ta);
+    ta.addEventListener("input", function () {
+      autosize(ta);
+      state.decisions[id] = Object.assign({}, state.decisions[id], { note: ta.value });
+      persist();
+    });
+  });
+
+  function markdown() {
+    var lines = ["# Review of “Playbooks & Lifecycle” v2 (PMA-M6 proposal)", ""];
+    var decLines = [];
+    document.querySelectorAll("fieldset[data-decision]").forEach(function (fs) {
+      var id = fs.getAttribute("data-decision");
+      var d = state.decisions[id] || {};
+      if (!d.choice && !(d.note || "").trim()) return;
+      decLines.push("- **" + id + " " + fs.getAttribute("data-title") + "**: " + (d.choice || "no choice") +
+        ((d.note || "").trim() ? " (note: " + d.note.trim() + ")" : ""));
+    });
+    if (decLines.length) lines.push("## Decisions", "", ...decLines, "");
+    var secLines = [];
+    document.querySelectorAll("section[data-note]").forEach(function (s) {
+      var text = (state.sections[s.id] || "").trim();
+      if (text) secLines.push("### " + s.getAttribute("data-note"), "", text, "");
+    });
+    if (secLines.length) lines.push("## Comments", "", ...secLines);
+    if (!decLines.length && !secLines.length) lines.push("_No comments yet._");
+    return lines.join("\n").trim() + "\n";
+  }
+  // For Claude: read everything with window.reviewNotes() from the browser pane.
+  window.reviewNotes = markdown;
+  window.reviewState = function () { return JSON.parse(JSON.stringify(state)); };
+
+  function counts() {
+    var c = 0, d = 0;
+    Object.keys(state.sections).forEach(function (k) { if ((state.sections[k] || "").trim()) c++; });
+    Object.keys(state.decisions).forEach(function (k) { if (state.decisions[k] && state.decisions[k].choice) d++; });
+    return { comments: c, decisions: d };
+  }
+  var total = document.querySelectorAll("fieldset[data-decision]").length;
+  function refresh() {
+    var n = counts();
+    var el = document.getElementById("note-count");
+    var where = fileOk ? " · saves to <code>" + FILE.split("/").pop() + "</code>" : "";
+    if (!n.comments && !n.decisions) { el.innerHTML = "No comments yet" + where; }
+    else { el.innerHTML = "<b>" + n.comments + "</b> comment" + (n.comments === 1 ? "" : "s") + " · <b>" + n.decisions + "</b>/" + total + " decisions" + where; }
+  }
+  refresh();
+
+  function hydrate() {
+    document.querySelectorAll("section[data-note]").forEach(function (s) {
+      var ta = document.getElementById("note-" + s.id);
+      if (ta) { ta.value = state.sections[s.id] || ""; autosize(ta); }
+    });
+    document.querySelectorAll("fieldset[data-decision]").forEach(function (fs) {
+      var d = state.decisions[fs.getAttribute("data-decision")] || {};
+      fs.querySelectorAll("input[type=radio]").forEach(function (r) { r.checked = r.value === d.choice; });
+      var ta = fs.querySelector("textarea");
+      ta.value = d.note || "";
+      autosize(ta);
+    });
+    refresh();
+  }
+
+  // The comments file, when there is one, wins over this browser's copy.
+  if (FILE) {
+    fetch(FILE, { cache: "no-store" }).then(function (r) {
+      if (r.status === 404) {
+        fileOk = true;
+        var n = counts();
+        if (n.comments || n.decisions) saveFile();
+        refresh();
+        return null;
+      }
+      return r.ok ? r.json() : null;
+    }).then(function (data) {
+      if (!data) return;
+      fileOk = true;
+      state.sections = {};
+      state.decisions = {};
+      Object.keys(data.sections || {}).forEach(function (k) { state.sections[k] = data.sections[k].text || ""; });
+      Object.keys(data.decisions || {}).forEach(function (k) {
+        var d = data.decisions[k];
+        state.decisions[k] = { choice: d.choice || undefined, note: d.note || "" };
+      });
+      state.updated = data.updated;
+      hydrate();
+    }).catch(function () { /* no server: this browser only */ });
+  }
+
+  var exportBox = document.getElementById("export");
+  var exportText = document.getElementById("export-text");
+  var hint = document.getElementById("export-hint");
+  document.getElementById("copy-btn").addEventListener("click", function () {
+    var md = markdown();
+    exportText.value = md;
+    exportBox.hidden = false;
+    var fallback = function () {
+      hint.textContent = "Select all and copy (⌘C), then paste it in the chat.";
+      exportText.focus();
+      exportText.select();
+    };
+    try {
+      navigator.clipboard.writeText(md).then(function () { hint.textContent = "Copied to the clipboard. Paste it in the chat."; }, fallback);
+    } catch (e) { fallback(); }
+  });
+  document.getElementById("export-close").addEventListener("click", function () { exportBox.hidden = true; });
+
+  var clearBtn = document.getElementById("clear-btn");
+  var armed = false, armTimer;
+  clearBtn.addEventListener("click", function () {
+    if (!armed) {
+      armed = true;
+      clearBtn.textContent = "Click again to clear all";
+      clearBtn.classList.add("danger-armed");
+      armTimer = setTimeout(function () { armed = false; clearBtn.textContent = "Clear"; clearBtn.classList.remove("danger-armed"); }, 3000);
+      return;
+    }
+    clearTimeout(armTimer);
+    armed = false;
+    clearBtn.textContent = "Clear";
+    clearBtn.classList.remove("danger-armed");
+    state = { sections: {}, decisions: {} };
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    document.querySelectorAll("textarea").forEach(function (t) { if (t.id !== "export-text") { t.value = ""; autosize(t); } });
+    document.querySelectorAll("input[type=radio]").forEach(function (r) { r.checked = false; });
+    persist();
+  });
+})();
+</script>
+</body>
+</html>
