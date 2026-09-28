@@ -1,0 +1,92 @@
+# The sdlc layer compiled on its own: the lifecycle's principles and base checks, which every playbook extends.
+# Its source of truth moves to the playbooks repo (project PLAY); this copy seeds tests and PMA's adoption.
+name: sdlc
+version: 1.0.0
+
+principles:
+  clarity: No build without an accepted spec
+  decisions: Decisions that are hard to reverse are written down
+  small_steps: Work moves in small, estimated steps
+  verified: Nothing ships unverified
+  reversible: Every release can be rolled back
+  learn: Every release feeds back
+  improve: The playbook improves from what each release teaches
+
+environments:
+  - name: dev
+  - name: staging
+  - name: prod
+
+checks:
+  spec.accepted:
+    kind: attest
+    principle: clarity
+    skill: spec
+    text: Spec accepted, with acceptance criteria as a checklist
+  design.decisions_recorded:
+    kind: attest
+    principle: decisions
+    skill: design
+    text: Decisions that are hard to reverse are recorded, or none were needed
+  plan.estimated:
+    kind: auto
+    rule: tasks_estimated
+    principle: small_steps
+  plan.small_tasks:
+    kind: auto
+    rule: tasks_small
+    principle: small_steps
+  build.tasks_done:
+    kind: auto
+    rule: tasks_done
+    principle: small_steps
+  verify.tests:
+    kind: probe
+    signal: tests
+    principle: verified
+  verify.review:
+    kind: attest
+    principle: verified
+    skill: verify
+    text: Code reviewed and the findings fixed
+    task:
+      estimate: 0.5
+      title: Review and fix findings
+  verify.acceptance:
+    kind: attest
+    principle: verified
+    text: Every acceptance criterion checked against the running software
+  release.deployed:
+    kind: auto
+    rule: deployed
+    principle: reversible
+  release.rollback_plan:
+    kind: attest
+    principle: reversible
+    env: prod
+    text: Rollback point recorded before the deploy
+  learn.retro:
+    kind: attest
+    principle: learn
+    skill: retro
+    text: Retro held; playbook changes proposed, or none needed
+  learn.time_logged:
+    kind: auto
+    rule: time_logged
+    principle: learn
+  maintain.applied:
+    kind: attest
+    principle: improve
+    skill: maintain
+    text: Accepted playbook changes released as a new version
+
+detectors:
+  - name: migrations
+    when:
+      exists: migrations/
+    add:
+      release.migration_paired:
+        kind: attest
+        principle: reversible
+        env: prod
+        text: Migration applied in the same cut-over as the deploy; rollback point recorded

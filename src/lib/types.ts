@@ -19,6 +19,14 @@ export type MilestoneStatus = z.infer<typeof MilestoneStatus>;
 export type ProjectStatus = z.infer<typeof ProjectStatus>;
 export type Priority = z.infer<typeof Priority>;
 
+/**
+ * The lifecycle every project follows, in order; playbooks (src/lib/playbook.ts) add checks to its stages but can't
+ * change them. `maintain` is optional: a milestone enters it only when its retro proposes playbook changes.
+ */
+export const LIFECYCLE_STAGES = ["idea", "spec", "design", "plan", "build", "verify", "release", "learn", "maintain"] as const;
+export const LifecycleStage = z.enum(LIFECYCLE_STAGES);
+export type LifecycleStage = z.infer<typeof LifecycleStage>;
+
 /** Opaque primary key (UUID v7); references between records use it, so they survive code changes. */
 const id = z.uuid();
 /** Position within the parent, from its counter: never reused, even after an item moves away. */
