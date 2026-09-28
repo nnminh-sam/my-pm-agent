@@ -3,6 +3,7 @@
 import { startTransition, useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveRecordAction, type SaveRecordState } from "@/app/actions";
+import { copyText } from "@/components/copy-code";
 // Type-only: record-markdown.ts is server code.
 import type { RecordKind } from "@/lib/record-markdown";
 
@@ -16,15 +17,6 @@ const HINT: Record<RecordKind, string> = {
 
 /** The browser submits CRLF and the server normalizes it (record-edit.ts); neither is an edit. */
 const same = (a: string, b: string) => a.replace(/\r\n?/g, "\n") === b.replace(/\r\n?/g, "\n");
-
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 const BUTTON = "rounded-lg border border-border bg-surface px-3 py-1 text-sm hover:bg-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50";
 const PRIMARY =
@@ -73,6 +65,8 @@ export function RecordEditor({
   }, null);
   // Errors belong to one session: a new one (Edit, Reload) hides the last result.
   const [dismissed, setDismissed] = useState<SaveRecordState>(null);
+  // Feedback for "Copy my edits"; cleared by each save attempt (the stale panel only follows one).
+  const [copyNote, setCopyNote] = useState<string | null>(null);
   const result = state !== dismissed ? state : null;
 
   // A refresh brought newer text (Reload, or a revalidation after another action): an untouched session follows it.
@@ -120,6 +114,7 @@ export function RecordEditor({
   const submit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!session || pending) return;
+    setCopyNote(null);
     // Built here rather than from hidden inputs so `base` keeps its exact text (and no form reset after the action).
     const formData = new FormData();
     formData.set("kind", kind);
@@ -190,12 +185,19 @@ export function RecordEditor({
             <p key={i}>{error}</p>
           ))}
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => copyText(session.text)} className={BUTTON}>
+            <button
+              type="button"
+              onClick={async () => setCopyNote((await copyText(session.text)) ? "Copied" : "Couldn't copy; select the text and copy it yourself.")}
+              className={BUTTON}
+            >
               Copy my edits
             </button>
             <button type="button" onClick={reload} className={BUTTON}>
               Reload
             </button>
+            <span role="status" className="self-center text-xs text-muted">
+              {copyNote}
+            </span>
           </div>
         </div>
       ) : (

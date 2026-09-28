@@ -2,8 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CopyCode } from "@/components/copy-code";
 import { Outlook } from "@/components/outlook";
+import { RecordEditor } from "@/components/record-editor";
 import { Badge, Card, Markdown, PriorityBadge, Stat, hours } from "@/components/ui";
 import { milestoneSummary, projectSummary, scheduleFor } from "@/lib/planning";
+import { toEditable } from "@/lib/record-markdown";
 import { NotFoundError, getProject, loadWorkspace } from "@/lib/repo";
 import { fmtDay } from "@/lib/time";
 
@@ -26,40 +28,44 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Link href="/projects" className="text-muted hover:underline">
-            Projects
-          </Link>
-          <span className="text-muted">/</span>
-          <CopyCode code={project.code} className="text-muted" />
-          <PriorityBadge priority={project.priority} />
-          <Badge tone={onHold ? "warn" : "muted"}>{project.status.replace("_", " ")}</Badge>
+      <RecordEditor kind="project" id={project.id} code={project.code} editable={toEditable("project", project, ws)}>
+        <div className="space-y-6">
+          <div>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Link href="/projects" className="text-muted hover:underline">
+                Projects
+              </Link>
+              <span className="text-muted">/</span>
+              <CopyCode code={project.code} className="text-muted" />
+              <PriorityBadge priority={project.priority} />
+              <Badge tone={onHold ? "warn" : "muted"}>{project.status.replace("_", " ")}</Badge>
+            </div>
+            <h1 className="mt-1 text-xl font-semibold tracking-tight">{project.title}</h1>
+          </div>
+
+          {onHold && (
+            <div className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn">
+              This project is on hold, so none of its tasks are on the schedule.
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="Estimate" value={`${hours(s.estimate_hours)}${s.estimate_sd_hours ? ` ±${hours(s.estimate_sd_hours)}` : ""}`} />
+            <Stat label="Remaining" value={hours(s.remaining_hours)} />
+            <Stat
+              label={project.deadline ? `Done by (due ${fmtDay(project.deadline)})` : "Done by"}
+              value={s.projected_finish ? fmtDay(s.projected_finish) : "—"}
+              tone={s.on_track === false ? "danger" : s.on_track ? "ok" : undefined}
+            />
+            <Stat label="Progress" value={`${Math.round(s.progress * 100)}%`} />
+          </div>
+
+          <Card className="px-5 py-4">
+            <h2 className="mb-2 text-xs font-medium tracking-wide text-muted uppercase">About</h2>
+            <Markdown>{project.body}</Markdown>
+          </Card>
         </div>
-        <h1 className="mt-1 text-xl font-semibold tracking-tight">{project.title}</h1>
-      </div>
-
-      {onHold && (
-        <div className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn">
-          This project is on hold, so none of its tasks are on the schedule.
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Estimate" value={`${hours(s.estimate_hours)}${s.estimate_sd_hours ? ` ±${hours(s.estimate_sd_hours)}` : ""}`} />
-        <Stat label="Remaining" value={hours(s.remaining_hours)} />
-        <Stat
-          label={project.deadline ? `Done by (due ${fmtDay(project.deadline)})` : "Done by"}
-          value={s.projected_finish ? fmtDay(s.projected_finish) : "—"}
-          tone={s.on_track === false ? "danger" : s.on_track ? "ok" : undefined}
-        />
-        <Stat label="Progress" value={`${Math.round(s.progress * 100)}%`} />
-      </div>
-
-      <Card className="px-5 py-4">
-        <h2 className="mb-2 text-xs font-medium tracking-wide text-muted uppercase">About</h2>
-        <Markdown>{project.body}</Markdown>
-      </Card>
+      </RecordEditor>
 
       <Card>
         <h2 className="border-b border-border px-4 py-2.5 font-medium">

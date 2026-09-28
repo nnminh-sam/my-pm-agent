@@ -5,7 +5,7 @@ A personal project manager built to be driven by AI agents.
 - **Projects → milestones → tasks**, each with a readable code (`PMA`, `PMA-M1`, `PMA-M1-T3`), stored in Neon Postgres, or as Markdown files with YAML frontmatter that you can read, diff and edit by hand.
 - **A scheduler lays tasks onto your working hours**, following priority, dependencies and deadlines. It re-plans every time an estimate, priority or piece of logged time changes.
 - **An MCP server** at `/api/mcp` lets Claude Code or any other MCP client break milestones down, estimate, rearrange and log time. The same tools are exposed to in-browser agents through WebMCP.
-- **A small web UI** with Schedule, Projects, Backlog, Milestone and Task pages.
+- **A small web UI** with Schedule, Projects, Backlog, Milestone and Task pages. Copy a code to hand a task to an agent, or edit any project, milestone or task as markdown.
 
 ## Run it locally
 
@@ -68,7 +68,7 @@ Then just talk to it:
 > I spent 2h on WEB-M1-T3 and it's done. What's next today?
 > WEB-M1-T2 is bigger than I thought, more like 10h. Replan.
 
-Prompts are also available as slash commands: `/mcp__my-pm__breakdown_project WEB`, `/mcp__my-pm__breakdown_milestone WEB-M1`, `/mcp__my-pm__estimate_tasks`, `/mcp__my-pm__replan`, `/mcp__my-pm__daily_checkin`.
+Prompts are also available as slash commands: `/mcp__my-pm__breakdown_project WEB`, `/mcp__my-pm__breakdown_milestone WEB-M1`, `/mcp__my-pm__work_on_task WEB-M1-T3`, `/mcp__my-pm__estimate_tasks`, `/mcp__my-pm__replan`, `/mcp__my-pm__daily_checkin`.
 
 ## Data format
 
@@ -162,6 +162,26 @@ Estimation is calibrated from your own history. `get_estimation_stats` compares 
 | `get_schedule` | Day-by-day plan (text or JSON) |
 | `get_estimation_stats` | Estimate accuracy, overall and per tag |
 | `update_settings` | Working hours, days off, buffer and so on |
+
+### Hand a task to an agent
+
+Every code in the web UI (page headings, task lists) has a copy icon next to it. Paste the bare code, e.g. `WEB-M1-T3`, into an MCP-connected agent: the server instructions tell it to call `get_task`, which returns the task with its milestone spec, project and the status of each dependency, then set it in progress, do the work and `log_time` as it goes. `/mcp__my-pm__work_on_task WEB-M1-T3` spells out the same steps.
+
+## Editing in the web UI
+
+**Edit** on a project, milestone or task page turns it into markdown: the editable fields as YAML frontmatter, the description (a milestone's spec) as the body. **⌘/Ctrl+Enter** saves, **Esc** cancels.
+
+| Record | Editable fields |
+| --- | --- |
+| Task | `title`, `status`, `priority`, `milestone`, `estimate`, `deadline`, `not_before`, `depends_on`, `tags` |
+| Milestone | `title`, `status`, `project`, `priority`, `deadline` |
+| Project | `code`, `title`, `status`, `priority`, `deadline` |
+
+- References are written as codes (`milestone: WEB-M1`, `depends_on: [WEB-M1-T2]`); unknown codes and dependency cycles are refused.
+- Read-only, and refused if added: `id`, a task's or milestone's `code` and `number`, `created`, the numbering counters, and on tasks `estimate_range`/`pert`, `order`, `spent`, `completed` and the log. Time goes through **Log time**.
+- Removing a key clears it: `priority` → inherit, `deadline`, `not_before`, and lists become empty. Required fields (`title`, `status`, the parent, a project's `code` and `priority`) and `estimate` can't be removed. A changed `estimate` replaces a three-point range.
+- Changing a project's `code` renames its milestones and tasks; moving a task or milestone gives it the next number in its new parent. The page follows to the new URL.
+- If the record changed elsewhere (say, an agent updated it) since the editor opened, the save is refused with "changed elsewhere": copy your edits, reload and apply them again.
 
 ## Auth
 
@@ -257,6 +277,8 @@ src/lib/scheduler.ts     scheduling algorithm (pure, tested)
 src/lib/estimation.ts    PERT, rollups, calibration stats
 src/lib/repo.ts          projects/milestones/tasks/settings/users: validation, codes and domain rules
 src/lib/codes.ts         code formats, parsing, natural ordering, UUID v7 ids
+src/lib/record-markdown.ts  records as editable markdown (frontmatter + body) and back to a patch
+src/lib/record-edit.ts   saving an edited record, with the stale check
 src/lib/repository/      storage backends behind repo.ts: Postgres and markdown files
 src/lib/store/           file store for the markdown backend (local fs)
 src/lib/db.ts            Neon clients (pooled for the app, unpooled for scripts)
@@ -267,6 +289,7 @@ src/app/api/mcp/         MCP endpoint (+ WebMCP bridge script)
 src/lib/auth/            auth modes, password hashing, JWTs, sessions, sign-up/login, API keys
 src/app/api/auth/        JSON sign-up, login, logout
 src/app/(app)/           web UI
+src/components/          UI components (record-editor, copy-code, task table, Gantt, …)
 src/app/login, signup    login and sign-up pages
 src/proxy.ts             auth for pages and the API, session renewal
 ```

@@ -2,10 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Db, Row } from "./db";
+import { Client } from "@neondatabase/serverless";
+import { revalidatePath } from "next/cache";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { saveRecordAction } from "@/app/actions";
+import { SESSION_COOKIE } from "./auth";
+import { SESSION_TTL_SECONDS, signJwt } from "./auth/jwt";
+import { neonDb, type Db, type Row } from "./db";
 import { inheritedPriority } from "./hierarchy";
-import { migrate } from "./migrate";
+import { migrate, type MigrationSession } from "./migrate";
 import { saveEditedRecord } from "./record-edit";
 import { EDITABLE_KEYS, toEditable, type RecordKind } from "./record-markdown";
 import * as repo from "./repo";
@@ -16,9 +21,20 @@ import { FsStore } from "./store/fs";
 import type { Milestone, Project, Task } from "./types";
 
 /**
- * Markdown edits (record-markdown.ts) saved through saveEditedRecord and the repository, on both backends:
- * what's stored afterwards, and that a refused edit writes nothing.
+ * Markdown edits (record-markdown.ts) saved through saveEditedRecord and the repository, on every backend:
+ * what's stored afterwards, and that a refused edit writes nothing. Then the same through the server action
+ * (saveRecordAction in src/app/actions.ts), with Next's request APIs stubbed below.
  */
+
+// The request saveRecordAction sees through next/headers; each test sets what it needs.
+const request = vi.hoisted(() => ({ cookies: new Map<string, string>(), headers: new Headers() }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) => (request.cookies.has(name) ? { name, value: request.cookies.get(name)! } : undefined),
+  }),
+  headers: async () => request.headers,
+}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const tempDirs: string[] = [];
 afterAll(async () => {
@@ -46,6 +62,40 @@ async function pglite(): Promise<PgRepository> {
   return new PgRepository(db);
 }
 
+/**
+ * A real Neon database, only when TEST_DATABASE_URL points at a disposable branch. vitest runs files in parallel and
+ * repo.test.ts wipes and fills that URL's database meanwhile, so this suite uses a sibling database on the same
+ * branch (created on first use, wiped first).
+ */
+async function neonTestDb(url: string): Promise<PgRepository> {
+  const own = new URL(url);
+  const name = `${decodeURIComponent(own.pathname.slice(1)) || "neondb"}_record_edit`;
+  own.pathname = `/${encodeURIComponent(name)}`;
+  const admin = new Client(url);
+  await admin.connect();
+  try {
+    const exists = await admin.query("select 1 from pg_database where datname = $1", [name]);
+    if (exists.rows.length === 0) await admin.query(`create database "${name.replace(/"/g, '""')}"`);
+  } finally {
+    await admin.end();
+  }
+  const client = new Client(own.href);
+  await client.connect();
+  const session: MigrationSession = {
+    exec: async (sql) => {
+      await client.query(sql);
+    },
+    query: async (text, params) => (await client.query(text, params)).rows,
+  };
+  try {
+    await migrate(session);
+    await session.exec("truncate tasks, milestones, projects, settings, users, api_keys restart identity");
+  } finally {
+    await client.end();
+  }
+  return new PgRepository(neonDb(own.href));
+}
+
 const backends: { name: string; setup: () => Promise<Repository> }[] = [
   {
     name: "fs",
@@ -57,6 +107,8 @@ const backends: { name: string; setup: () => Promise<Repository> }[] = [
   },
   { name: "postgres (pglite)", setup: pglite },
 ];
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+if (testDatabaseUrl) backends.push({ name: "postgres (neon)", setup: () => neonTestDb(testDatabaseUrl) });
 
 interface Records {
   task: Task;
@@ -263,6 +315,27 @@ describe.each(backends)("saving edited markdown, $name backend", (backend) => {
       expect(await repo.getTask(record.id)).toEqual(agent);
     });
 
+    it("a stale base for a milestone or a project, and a base that isn't what the record serializes to", async () => {
+      const milestone = await opened("milestone", "ED-M1");
+      const agentMilestone = await repo.updateMilestone(milestone.record.id, { deadline: "2027-03-01" });
+      const project = await opened("project", "ED");
+      const agentProject = await repo.updateProject(project.record.id, { deadline: "2027-04-01" });
+      const before = await snapshot();
+      expect(await saveEditedRecord("milestone", milestone.record.id, milestone.text, edit("milestone", milestone.text, { title: "Mine" }))).toMatchObject({ ok: false, stale: true });
+      expect(await saveEditedRecord("project", project.record.id, project.text, edit("project", project.text, { title: "Mine" }))).toMatchObject({ ok: false, stale: true });
+      expect(await snapshot()).toEqual(before);
+      expect(await repo.getMilestone(milestone.record.id)).toEqual(agentMilestone);
+      expect(await repo.getProject(project.record.id)).toEqual(agentProject);
+
+      // A base the client altered (or an empty one) is refused as stale too, even when the new text is valid.
+      const current = await opened("task", "ED-M1-T3");
+      for (const base of [edit("task", current.text, { title: "Something else" }), ""]) {
+        const result = await saveEditedRecord("task", current.record.id, base, edit("task", current.text, { title: "Mine" }));
+        expect(result).toMatchObject({ ok: false, stale: true });
+      }
+      expect(await snapshot()).toEqual(before);
+    });
+
     it("invalid markdown: bad YAML, a bad status, an unknown parent, no frontmatter", async () => {
       expect(await refused("task", "ED-M1-T3", (text) => edit("task", text, { title: "[unclosed", estimate: "9" }))).toContain("isn't valid YAML");
       expect(await refused("task", "ED-M1-T3", (text) => edit("task", text, { title: "Renamed", status: "someday" }))).toContain('"status" must be one of');
@@ -286,5 +359,113 @@ describe.each(backends)("saving edited markdown, $name backend", (backend) => {
       expect(await saveEditedRecord(kind, record.id, text, reformatted)).toEqual({ ok: true, code: ref, changed: false });
     }
     expect(await snapshot()).toEqual(before);
+  });
+});
+
+const JWT_SECRET = "record-edit-test-jwt-secret-".padEnd(48, "0");
+const revalidated = vi.mocked(revalidatePath);
+
+/** The FormData the record editor posts. */
+function form(fields: Partial<Record<"kind" | "id" | "base" | "text", string>>) {
+  const data = new FormData();
+  for (const [key, value] of Object.entries(fields)) data.set(key, value);
+  return data;
+}
+
+describe.each(backends)("saveRecordAction, $name backend", (backend) => {
+  beforeAll(async () => {
+    setRepository(await backend.setup());
+    await repo.createProject({ title: "Action", code: "ACT", priority: "P2" });
+    await repo.createMilestone({ title: "First", project: "ACT" });
+    await repo.createMilestone({ title: "Second", project: "ACT" });
+    await repo.createTasks([{ title: "Edit me", milestone: "ACT-M1", estimate: 2 }]);
+  });
+  beforeEach(() => {
+    // "open" auth mode (local, no JWT_SECRET) unless a test says otherwise; no credentials on the request.
+    for (const key of ["JWT_SECRET", "PM_SECRET", "VERCEL"]) vi.stubEnv(key, undefined);
+    request.cookies.clear();
+    request.headers = new Headers();
+    revalidated.mockClear();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("saves each kind, returns its (new) code and revalidates only when something changed", async () => {
+    const task = await opened("task", "ACT-M1-T1");
+    const saved = await saveRecordAction(null, form({ kind: "task", id: task.record.id, base: task.text, text: edit("task", task.text, { title: "Edited", milestone: "ACT-M2" }) }));
+    expect(saved).toEqual({ ok: true, code: "ACT-M2-T1", changed: true });
+    expect(await repo.getTask(task.record.id)).toMatchObject({ code: "ACT-M2-T1", title: "Edited" });
+    expect(revalidated.mock.calls).toEqual([["/", "layout"]]);
+
+    const milestone = await opened("milestone", "ACT-M1");
+    expect(await saveRecordAction(null, form({ kind: "milestone", id: milestone.record.id, base: milestone.text, text: edit("milestone", milestone.text, {}, "The spec.") }))).toEqual({ ok: true, code: "ACT-M1", changed: true });
+    expect((await repo.getMilestone("ACT-M1")).body).toBe("The spec.");
+
+    const project = await opened("project", "ACT");
+    expect(await saveRecordAction(null, form({ kind: "project", id: project.record.id, base: project.text, text: edit("project", project.text, { code: "ACX" }) }))).toEqual({ ok: true, code: "ACX", changed: true });
+    expect((await repo.getTask(task.record.id)).code).toBe("ACX-M2-T1");
+    expect(revalidated).toHaveBeenCalledTimes(3);
+
+    // Unchanged text (as a browser posts it, CRLF): ok, but nothing to revalidate.
+    revalidated.mockClear();
+    const current = await opened("task", "ACX-M2-T1");
+    const crlf = current.text.replace(/\n/g, "\r\n");
+    expect(await saveRecordAction(null, form({ kind: "task", id: current.record.id, base: crlf, text: crlf }))).toEqual({ ok: true, code: "ACX-M2-T1", changed: false });
+    expect(revalidated).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown kind, missing fields, a stale base and invalid markdown without writing or revalidating", async () => {
+    const { record, text } = await opened("task", "ACX-M2-T1");
+    const changed = edit("task", text, { title: "Refused" });
+    const before = await snapshot();
+    const cases: [Parameters<typeof form>[0], string][] = [
+      [{ kind: "user", id: record.id, base: text, text: changed }, 'Unknown record kind "user"'],
+      [{ id: record.id, base: text, text: changed }, 'Unknown record kind ""'],
+      [{ kind: "task", base: text, text: changed }, "This task no longer exists."],
+      [{ kind: "milestone", id: record.id, base: text, text: changed }, "This milestone no longer exists."],
+      [{ kind: "task", id: record.id, text: changed }, "was changed elsewhere"],
+      [{ kind: "task", id: record.id, base: text }, "must start with frontmatter"],
+      [{ kind: "task", id: record.id, base: text, text: edit("task", text, { status: "someday" }) }, '"status" must be one of'],
+    ];
+    for (const [fields, error] of cases) {
+      const result = await saveRecordAction(null, form(fields));
+      expect(result).toMatchObject({ ok: false });
+      expect(result?.ok === false && result.errors.join("\n")).toContain(error);
+    }
+    expect(revalidated).not.toHaveBeenCalled();
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("requires a session when auth is on, and nothing gets past a locked app", async () => {
+    const { record, text } = await opened("task", "ACX-M2-T1");
+    const fields = { kind: "task", id: record.id, base: text, text: edit("task", text, { title: "Signed in" }) };
+    const before = await snapshot();
+
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    await expect(saveRecordAction(null, form(fields))).rejects.toThrow("Unauthorized");
+    request.cookies.set(SESSION_COOKIE, "not-a-jwt");
+    await expect(saveRecordAction(null, form(fields))).rejects.toThrow("Unauthorized");
+    const expired = signJwt({ sub: "U-1", email: "me@example.com" }, JWT_SECRET, { ttlSeconds: 60, now: Math.floor(Date.now() / 1000) - 3600 });
+    request.cookies.set(SESSION_COOKIE, expired);
+    await expect(saveRecordAction(null, form(fields))).rejects.toThrow("Unauthorized");
+    request.cookies.clear();
+    request.headers = new Headers({ authorization: `Bearer ${signJwt({ sub: "U-1", email: "me@example.com" }, "some-other-secret".padEnd(48, "x"), { ttlSeconds: 60 })}` });
+    await expect(saveRecordAction(null, form(fields))).rejects.toThrow("Unauthorized");
+
+    // Locked: no JWT_SECRET on Vercel refuses everyone, whatever they send.
+    vi.stubEnv("JWT_SECRET", undefined);
+    vi.stubEnv("VERCEL", "1");
+    request.headers = new Headers();
+    request.cookies.set(SESSION_COOKIE, signJwt({ sub: "U-1", email: "me@example.com" }, JWT_SECRET, { ttlSeconds: SESSION_TTL_SECONDS }));
+    await expect(saveRecordAction(null, form(fields))).rejects.toThrow("Unauthorized");
+
+    expect(revalidated).not.toHaveBeenCalled();
+    expect(await snapshot()).toEqual(before);
+
+    // With a valid session cookie the same save goes through.
+    vi.stubEnv("VERCEL", undefined);
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    expect(await saveRecordAction(null, form(fields))).toEqual({ ok: true, code: "ACX-M2-T1", changed: true });
+    expect((await repo.getTask(record.id)).title).toBe("Signed in");
+    expect(revalidated).toHaveBeenCalledOnce();
   });
 });

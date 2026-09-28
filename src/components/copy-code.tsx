@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 /** Clipboard API where available (secure contexts); otherwise the old hidden-textarea + execCommand route. */
-async function copyText(text: string) {
+export async function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
