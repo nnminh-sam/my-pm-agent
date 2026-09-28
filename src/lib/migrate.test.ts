@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, describe, expect, it } from "vitest";
+import { newId } from "./codes";
 import type { Db, Row } from "./db";
 import { migrate, type MigrationSession } from "./migrate";
 import * as repo from "./repo";
@@ -61,7 +62,8 @@ describe("005_milestones_and_codes", { timeout: 30_000 }, () => {
         ('T-4', 'd', 'todo', 'F-3', null, null, '{T-99}', '{}', null, '2026-09-28', '');
     `);
 
-    expect(await migrate(session, MIGRATIONS)).toEqual(["005_milestones_and_codes"]);
+    // Later migrations run too; this test is about 005.
+    expect((await migrate(session, MIGRATIONS))[0]).toBe("005_milestones_and_codes");
 
     expect(await rows("select code, title, last_milestone_number, body from projects order by code")).toEqual([
       { code: "P1", title: "My PM Agent", last_milestone_number: 2, body: "See P1-M1 and P1-M2." },
@@ -120,5 +122,29 @@ describe("005_milestones_and_codes", { timeout: 30_000 }, () => {
     `);
     await expect(migrate(session, MIGRATIONS)).rejects.toThrow("Every task needs a feature before it can get a code (tasks without one: T-1)");
     expect(await rows("select id from tasks")).toEqual([{ id: "T-1" }]);
+  });
+});
+
+describe("006_lifecycle", { timeout: 30_000 }, () => {
+  it("gives existing projects and milestones lifecycle defaults", async () => {
+    const { session, db, rows } = await databaseBefore("006");
+    const project = newId();
+    await session.exec(`
+      insert into projects (id, code, title, created, last_milestone_number) values ('${project}', 'PMA', 'My PM Agent', '2026-09-27', 1);
+      insert into milestones (id, code, number, title, status, project, created) values ('${newId()}', 'PMA-M1', 1, 'Auth', 'done', '${project}', '2026-09-27');
+    `);
+    expect((await migrate(session, MIGRATIONS))[0]).toBe("006_lifecycle");
+    expect(await rows("select context, playbook, repos, detectors from projects")).toEqual([
+      { context: "personal", playbook: null, repos: [], detectors: [] },
+    ]);
+    expect(await rows("select stage, checks, deployments from milestones")).toEqual([{ stage: null, checks: {}, deployments: {} }]);
+
+    setRepository(new PgRepository(db));
+    const ws = await repo.loadWorkspace();
+    expect(ws.projects[0]).toMatchObject({ code: "PMA", context: "personal", repos: [], detectors: [] });
+    expect(ws.milestones[0]).toMatchObject({ code: "PMA-M1", status: "done", checks: {}, deployments: {} });
+    expect(ws.milestones[0].stage).toBeUndefined();
+    expect(ws.playbooks).toEqual([]);
+    expect(ws.problems).toEqual([]);
   });
 });

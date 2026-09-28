@@ -1,10 +1,12 @@
 import YAML from "yaml";
 import { z } from "zod";
 import { parseMarkdown, toMarkdown } from "../markdown";
+import { PlaybookVersion } from "../playbook";
 import type { FileStore } from "../store/types";
 import {
   ApiKeyMeta,
   MilestoneMeta,
+  PLAYBOOK_REF,
   ProjectMeta,
   TaskMeta,
   UserMeta,
@@ -17,6 +19,11 @@ import {
 import { COUNTER, idNumber, type Changes, type Key, type Records, type Repository } from "./types";
 
 const SETTINGS_FILE = "settings.yaml";
+/** Playbook versions: `playbooks/<name>@<version>.yaml`, written once and never changed. */
+const PLAYBOOKS_DIR = "playbooks";
+const playbookPath = (ref: string) => `${PLAYBOOKS_DIR}/${ref}.yaml`;
+const problem = (where: string, err: unknown) =>
+  `${where}: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`;
 
 /**
  * Workspace records live in `projects/`, `milestones/` and `tasks/` as `<uuid>.md` (names never change, even when a
@@ -94,21 +101,37 @@ export class FileRepository implements Repository {
       try {
         return parse<T>(dir, text);
       } catch (err) {
-        problems.push(`${p}: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`);
+        problems.push(problem(p, err));
         return undefined;
       }
     });
     return items.filter((x): x is T => x !== undefined);
   }
 
+  private async loadPlaybooks(problems: string[]) {
+    const paths = (await this.store.list(PLAYBOOKS_DIR)).filter((p) => p.endsWith(".yaml"));
+    const items = await mapLimit(paths, 16, async (p) => {
+      const text = await this.store.read(p);
+      if (text === null) return undefined;
+      try {
+        return PlaybookVersion.parse(YAML.parse(text));
+      } catch (err) {
+        problems.push(problem(p, err));
+        return undefined;
+      }
+    });
+    return items.filter((x): x is PlaybookVersion => x !== undefined);
+  }
+
   async loadAll(): Promise<Records> {
     const problems: string[] = [];
-    const [tasks, milestones, projects] = await Promise.all([
+    const [tasks, milestones, projects, playbooks] = await Promise.all([
       this.loadDir<Task>("tasks", problems),
       this.loadDir<Milestone>("milestones", problems),
       this.loadDir<Project>("projects", problems),
+      this.loadPlaybooks(problems),
     ]);
-    return { tasks, milestones, projects, problems };
+    return { tasks, milestones, projects, playbooks, problems };
   }
 
   private async get<T extends Entity>(dir: Dir, id: string) {
@@ -164,6 +187,17 @@ export class FileRepository implements Repository {
       }
       await this.store.write(`${dir}/${entity.id}.md`, serialize(dir, next));
     }
+  }
+
+  /** Null for anything that isn't a playbook ref, so a ref can never reach another path. */
+  async getPlaybookVersion(ref: string) {
+    if (!PLAYBOOK_REF.test(ref)) return null;
+    const text = await this.store.read(playbookPath(ref));
+    return text === null ? null : PlaybookVersion.parse(YAML.parse(text));
+  }
+
+  async insertPlaybookVersion(version: PlaybookVersion) {
+    return this.store.create(playbookPath(version.ref), YAML.stringify(version, { lineWidth: 0 }));
   }
 
   private async nextNumber(dir: "users" | "api_keys") {

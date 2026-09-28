@@ -20,7 +20,7 @@ async function main() {
   const target = new FileRepository(new FsStore(dir));
   const data = await exportTo(target, source);
   console.log(
-    `Exported ${process.env.NEON_BRANCH ?? "database"} to ${dir}: ${data.projects.length} projects, ${data.milestones.length} milestones, ${data.tasks.length} tasks`,
+    `Exported ${process.env.NEON_BRANCH ?? "database"} to ${dir}: ${data.projects.length} projects, ${data.milestones.length} milestones, ${data.tasks.length} tasks, ${data.playbooks.length} playbook versions`,
   );
   const diffs = await compareBackends(source, target);
   if (diffs.length) {

@@ -16,7 +16,7 @@ async function main() {
   if (args.includes("--dry-run")) {
     const data = await readAll(source);
     console.log(
-      `Would import from ${from} into ${branch}: ${data.projects.length} projects, ${data.milestones.length} milestones, ${data.tasks.length} tasks, settings: ${data.settings ? "yes" : "no"}`,
+      `Would import from ${from} into ${branch}: ${data.projects.length} projects, ${data.milestones.length} milestones, ${data.tasks.length} tasks, ${data.playbooks.length} playbook versions, settings: ${data.settings ? "yes" : "no"}`,
     );
     for (const problem of data.problems) console.log(`problem: ${problem}`);
     return;
@@ -25,7 +25,7 @@ async function main() {
   const target = new PgRepository(getUnpooledDb());
   const data = await importInto(target, source, { replace: args.includes("--replace") });
   console.log(
-    `Imported from ${from} into ${branch}: ${data.projects.length} projects, ${data.milestones.length} milestones, ${data.tasks.length} tasks`,
+    `Imported from ${from} into ${branch}: ${data.projects.length} projects, ${data.milestones.length} milestones, ${data.tasks.length} tasks, ${data.playbooks.length} playbook versions`,
   );
   const diffs = await compareBackends(source, target);
   if (diffs.length) {

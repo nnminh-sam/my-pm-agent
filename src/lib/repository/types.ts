@@ -1,3 +1,4 @@
+import type { PlaybookVersion } from "../playbook";
 import type { ApiKey, Milestone, Project, Task, User } from "../types";
 
 /** The workspace records. Users and API keys are deliberately not included (they stay out of import/export). */
@@ -5,6 +6,8 @@ export interface Records {
   tasks: Task[];
   milestones: Milestone[];
   projects: Project[];
+  /** Every stored playbook version, pinned or not (a project can be pinned back to any of them). */
+  playbooks: PlaybookVersion[];
   /** Records that couldn't be parsed; they're skipped rather than breaking everything. */
   problems: string[];
 }
@@ -42,6 +45,9 @@ export interface Repository {
   insert(changes: Changes): Promise<void>;
   /** Overwrites existing records, except the numbering counters (only allocateNumbers moves those). */
   save(changes: Changes): Promise<void>;
+  getPlaybookVersion(ref: string): Promise<PlaybookVersion | null>;
+  /** Stores a new playbook version; false (nothing written) when its ref is already stored. Versions never change. */
+  insertPlaybookVersion(version: PlaybookVersion): Promise<boolean>;
   getUser(id: string): Promise<User | null>;
   /** Exact match; the caller passes an already-normalized email. */
   findUserByEmail(email: string): Promise<User | null>;

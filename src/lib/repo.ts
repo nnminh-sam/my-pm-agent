@@ -13,6 +13,7 @@ import {
   type CodeKind,
 } from "./codes";
 import { pert } from "./estimation";
+import { comparePlaybookVersions, type PlaybookVersion } from "./playbook";
 import { getRepository, type Repository } from "./repository";
 import type { Changes, Key } from "./repository/types";
 import { todayIn } from "./time";
@@ -236,13 +237,22 @@ export interface Workspace {
   tasks: Task[];
   milestones: Milestone[];
   projects: Project[];
+  /** Every stored playbook version, by name then version. */
+  playbooks: PlaybookVersion[];
   /** Records that couldn't be parsed, or whose code doesn't match their parents; they don't break anything else. */
   problems: string[];
 }
 
-/** Stored codes that disagree with their parents (e.g. after a hand edit). Reported, never silently fixed. */
-function codeProblems({ tasks, milestones, projects }: Pick<Workspace, "tasks" | "milestones" | "projects">) {
+/**
+ * Stored codes that disagree with their parents (e.g. after a hand edit), and pins to playbook versions that aren't
+ * stored (the file backend has no foreign keys). Reported, never silently fixed.
+ */
+function codeProblems({ tasks, milestones, projects, playbooks }: Pick<Workspace, "tasks" | "milestones" | "projects" | "playbooks">) {
   const problems: string[] = [];
+  const refs = new Set(playbooks.map((v) => v.ref));
+  for (const p of projects) {
+    if (p.playbook && !refs.has(p.playbook)) problems.push(`project ${p.code}: its playbook ${p.playbook} isn't stored`);
+  }
   const projectCodes = new Map(projects.map((p) => [p.id, p.code]));
   const milestoneCodes = new Map(milestones.map((m) => [m.id, m.code]));
   for (const m of milestones) {
@@ -259,9 +269,17 @@ function codeProblems({ tasks, milestones, projects }: Pick<Workspace, "tasks" |
 }
 
 export async function loadWorkspace(repo: Repository = getRepository()): Promise<Workspace> {
-  const [settings, { tasks, milestones, projects, problems }] = await Promise.all([getSettings(repo), repo.loadAll()]);
+  const [settings, { tasks, milestones, projects, playbooks, problems }] = await Promise.all([getSettings(repo), repo.loadAll()]);
   for (const list of [tasks, milestones, projects]) list.sort((a, b) => compareCodes(a.code, b.code));
-  return { settings, tasks, milestones, projects, problems: [...problems, ...codeProblems({ tasks, milestones, projects })] };
+  playbooks.sort(comparePlaybookVersions);
+  return {
+    settings,
+    tasks,
+    milestones,
+    projects,
+    playbooks,
+    problems: [...problems, ...codeProblems({ tasks, milestones, projects, playbooks })],
+  };
 }
 
 export async function getTask(ref: string): Promise<Task> {
@@ -448,6 +466,8 @@ export async function createMilestone(input: NewMilestone): Promise<Milestone> {
     deadline: input.deadline,
     created: todayIn(settings.timezone),
     last_task_number: 0,
+    checks: {},
+    deployments: {},
     body: input.description ?? "",
   };
   await repository.insert({ milestones: [milestone] });
@@ -500,6 +520,9 @@ export async function createProject(input: NewProject): Promise<Project> {
     status: input.status ?? "active",
     priority: input.priority ?? "P2",
     deadline: input.deadline,
+    context: "personal",
+    repos: [],
+    detectors: [],
     created: todayIn(settings.timezone),
     last_milestone_number: 0,
     body: input.description ?? "",

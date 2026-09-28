@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { LIFECYCLE_STAGES, type LifecycleStage } from "./types";
+import { LIFECYCLE_STAGES, PLAYBOOK_NAME, VERSION, datetimeStr, type LifecycleStage } from "./types";
 
 /**
  * Compiled playbooks. A project's playbook, merged with the layers it extends (sdlc, personal, company), is what
@@ -10,9 +10,6 @@ import { LIFECYCLE_STAGES, type LifecycleStage } from "./types";
 
 /** Principle, environment, skill and detector names. */
 const NAME = /^[a-z][a-z0-9_-]*$/;
-/** `sdlc`, `personal`, or a project code such as `PMA`. */
-export const PLAYBOOK_NAME = /^[A-Za-z][A-Za-z0-9-]{0,39}$/;
-export const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 /** `<stage>.<name>`, e.g. `spec.accepted`: a check belongs to the stage before the dot. */
 export const CHECK_KEY = new RegExp(`^(${LIFECYCLE_STAGES.join("|")})\\.[a-z][a-z0-9_]*$`);
 
@@ -135,3 +132,34 @@ export function parsePlaybookRef(ref: string): { name: string; version: string }
   const version = ref.slice(at + 1);
   return at > 0 && PLAYBOOK_NAME.test(name) && VERSION.test(version) ? { name, version } : undefined;
 }
+
+/** Semver order: 1.2.0 < 1.10.0. Both must match VERSION. */
+export function compareVersions(a: string, b: string): number {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+}
+
+/**
+ * A stored playbook version (`playbook_versions` table, or `playbooks/<ref>.yaml`). Insert-only: a version is
+ * never changed or deleted, so any project can be pinned back to it. `hash` is of the definition, so re-sending
+ * the same version is a no-op and different content under an existing version is refused.
+ */
+export const PlaybookVersion = z
+  .object({
+    ref: z.string(),
+    name: z.string().regex(PLAYBOOK_NAME),
+    version: z.string().regex(VERSION),
+    hash: z.string().regex(/^[0-9a-f]{64}$/, "expected a lowercase hex SHA-256"),
+    synced_at: datetimeStr,
+    definition: Playbook,
+  })
+  .refine(
+    (v) => v.ref === playbookRef(v) && v.definition.name === v.name && v.definition.version === v.version,
+    "ref, name, version and the definition's name and version must agree",
+  );
+export type PlaybookVersion = z.infer<typeof PlaybookVersion>;
+
+/** By name (code points, so it's locale-independent), then version. */
+export const comparePlaybookVersions = (a: PlaybookVersion, b: PlaybookVersion) =>
+  (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) || compareVersions(a.version, b.version);

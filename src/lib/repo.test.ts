@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { Client } from "@neondatabase/serverless";
+import YAML from "yaml";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { newId } from "./codes";
 import { neonDb, type Db, type Row } from "./db";
 import { migrate, type MigrationSession } from "./migrate";
+import { Playbook, PlaybookVersion } from "./playbook";
 import * as repo from "./repo";
 import { setRepository, type Repository } from "./repository";
 import { FileRepository } from "./repository/file";
@@ -16,6 +18,22 @@ import { FsStore } from "./store/fs";
 import { todayIn } from "./time";
 import { compareBackends, exportTo, importInto, readAll } from "./transfer";
 import type { Task } from "./types";
+
+/** The seed sdlc playbook as a stored version. */
+async function sdlcVersion(version = "1.0.0"): Promise<PlaybookVersion> {
+  const definition = Playbook.parse({
+    ...YAML.parse(await readFile(new URL("./playbooks/sdlc.yaml", import.meta.url), "utf8")),
+    version,
+  });
+  return PlaybookVersion.parse({
+    ref: `sdlc@${version}`,
+    name: "sdlc",
+    version,
+    hash: "0".repeat(64),
+    synced_at: "2026-09-28T10:00:00.000Z",
+    definition,
+  });
+}
 
 const tempDirs: string[] = [];
 async function tempDir() {
@@ -60,7 +78,7 @@ async function neonTestDb(url: string): Promise<PgRepository> {
   };
   try {
     await migrate(session);
-    await session.exec("truncate tasks, milestones, projects, settings, users, api_keys restart identity");
+    await session.exec("truncate tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
   } finally {
     await client.end();
   }
@@ -309,6 +327,72 @@ describe.each(backends)("$name backend", (backend) => {
     });
   });
 
+  describe("lifecycle fields", () => {
+    it("stores playbook versions once and never overwrites them", async () => {
+      const v1 = await sdlcVersion();
+      expect(await backendRepo.insertPlaybookVersion(v1)).toBe(true);
+      expect(await backendRepo.insertPlaybookVersion({ ...v1, hash: "1".repeat(64) })).toBe(false);
+      expect(await backendRepo.getPlaybookVersion("sdlc@1.0.0")).toEqual(v1);
+      expect(await backendRepo.getPlaybookVersion("sdlc@9.9.9")).toBeNull();
+      expect(await backendRepo.getPlaybookVersion("../projects/x")).toBeNull();
+
+      // Newer versions sort after older ones by number, not as text.
+      const v10 = await sdlcVersion("1.10.0");
+      const v2 = await sdlcVersion("1.2.0");
+      await backendRepo.insertPlaybookVersion(v10);
+      await backendRepo.insertPlaybookVersion(v2);
+      const ws = await repo.loadWorkspace();
+      expect(ws.playbooks.map((v) => v.ref)).toEqual(["sdlc@1.0.0", "sdlc@1.2.0", "sdlc@1.10.0"]);
+      // Key order survives (the order checks are listed in).
+      expect(Object.keys(ws.playbooks[0].definition.checks)).toEqual(Object.keys(v1.definition.checks));
+      expect(ws.problems).toEqual([]);
+    });
+
+    it("persists a project's context, pin, repos and detectors, and a milestone's stage, checks and deployments", async () => {
+      const project = await repo.createProject({ title: "Lifecycle", code: "LC" });
+      expect(project).toMatchObject({ context: "personal", repos: [], detectors: [] });
+      expect(project.playbook).toBeUndefined();
+      const milestone = await repo.createMilestone({ title: "Core", project: "LC" });
+      expect(milestone).toMatchObject({ checks: {}, deployments: {} });
+      expect(milestone.stage).toBeUndefined();
+      if (backend.dir) {
+        const text = await readFile(path.join(backend.dir, `milestones/${milestone.id}.md`), "utf8");
+        expect(text).not.toMatch(/checks|deployments|stage/);
+      }
+
+      const pinned = {
+        ...project,
+        context: "company" as const,
+        playbook: "sdlc@1.0.0",
+        repos: ["github.com/acme/api", "github.com/acme/web"],
+        detectors: ["migrations"],
+      };
+      const staged = {
+        ...milestone,
+        status: "in_progress" as const,
+        stage: "release" as const,
+        checks: {
+          "spec.accepted": { status: "passed" as const, at: "2026-09-20", by: "claude", note: "https://docs.lc.test/spec" },
+          "design.decisions_recorded": { status: "waived" as const, at: "2026-09-21", note: "No hard-to-reverse decisions" },
+        },
+        deployments: { dev: { at: "2026-09-27", ref: "a1b2c3d" }, staging: { at: "2026-09-28", url: "https://staging.lc.test" } },
+      };
+      await backendRepo.save({ projects: [pinned], milestones: [staged] });
+      // The counter moved when LC-M1 was created; a save from the earlier read keeps it.
+      expect(await repo.getProject("LC")).toEqual({ ...pinned, last_milestone_number: 1 });
+      expect(await repo.getMilestone("LC-M1")).toEqual(staged);
+
+      if (backend.dir) {
+        const text = await readFile(path.join(backend.dir, `milestones/${milestone.id}.md`), "utf8");
+        expect(text).toContain("status: in_progress\nstage: release\nproject:");
+        expect(text).toContain("checks:\n  spec.accepted:\n    status: passed\n    at: 2026-09-20");
+        expect(text).toContain("deployments:\n  dev:\n    at: 2026-09-27\n    ref: a1b2c3d");
+      }
+      const ws = await repo.loadWorkspace();
+      expect(ws.problems).toEqual([]);
+    });
+  });
+
   describe("users", () => {
     const hash = "scrypt$16384$8$1$c2FsdA$aGFzaA";
 
@@ -360,7 +444,7 @@ describe.each(backends)("$name backend", (backend) => {
 
     it("keeps users out of the workspace", async () => {
       const records = await backendRepo.loadAll();
-      expect(Object.keys(records).sort()).toEqual(["milestones", "problems", "projects", "tasks"]);
+      expect(Object.keys(records).sort()).toEqual(["milestones", "playbooks", "problems", "projects", "tasks"]);
       expect(records.problems).toEqual([]);
       const ws = await repo.loadWorkspace();
       const ids = [...ws.tasks, ...ws.milestones, ...ws.projects].map((r) => r.id);
@@ -459,7 +543,7 @@ describe.each(backends)("$name backend", (backend) => {
 
     it("keeps API keys out of the workspace", async () => {
       const records = await backendRepo.loadAll();
-      expect(Object.keys(records).sort()).toEqual(["milestones", "problems", "projects", "tasks"]);
+      expect(Object.keys(records).sort()).toEqual(["milestones", "playbooks", "problems", "projects", "tasks"]);
       expect(records.problems).toEqual([]);
       const dump = JSON.stringify(await readAll(backendRepo));
       for (const hash of [h1, h2, h3]) expect(dump).not.toContain(hash);
@@ -504,6 +588,19 @@ describe("postgres specifics", () => {
     expect((await pg.loadAll()).tasks).toEqual([]);
   });
 
+  it("only pins projects to stored playbook versions, and only takes lifecycle stages", async () => {
+    const pg = await pglite();
+    setRepository(pg);
+    const project = await repo.createProject({ title: "P", code: "PP" });
+    const milestone = await repo.createMilestone({ title: "M", project: "PP" });
+    await expect(pg.save({ projects: [{ ...project, playbook: "sdlc@1.0.0" }] })).rejects.toThrow();
+    await pg.insertPlaybookVersion(await sdlcVersion());
+    await pg.save({ projects: [{ ...project, playbook: "sdlc@1.0.0" }] });
+    expect((await repo.getProject("PP")).playbook).toBe("sdlc@1.0.0");
+    const bad = { ...milestone, stage: "shipping" } as unknown as typeof milestone;
+    await expect(pg.save({ milestones: [bad] })).rejects.toThrow();
+  });
+
   it("enforces unique codes and unique numbers per milestone", async () => {
     const pg = await pglite();
     setRepository(pg);
@@ -538,6 +635,22 @@ describe("import / export", () => {
     await repo.createMilestone({ title: "G", project: "PX" });
     await repo.createTasks(["D", "E", "F"].map((title) => ({ title, milestone: "PX-M1" })));
     await repo.updateTask("PX-M1-T5", { milestone: "PX-M2" });
+    // Lifecycle data travels with everything else.
+    await source.insertPlaybookVersion(await sdlcVersion());
+    await source.insertPlaybookVersion(await sdlcVersion("1.1.0"));
+    const px = await repo.getProject("PX");
+    await source.save({ projects: [{ ...px, context: "company", playbook: "sdlc@1.0.0", repos: ["github.com/acme/px"], detectors: ["migrations"] }] });
+    const m1 = await repo.getMilestone("PX-M1");
+    await source.save({
+      milestones: [
+        {
+          ...m1,
+          stage: "release",
+          checks: { "spec.accepted": { status: "passed", at: "2026-09-20" }, "verify.review": { status: "failed", at: "2026-09-25", note: "2 findings" } },
+          deployments: { dev: { at: "2026-09-27", ref: "abc" } },
+        },
+      ],
+    });
     // Users are never transferred.
     await repo.createUser({ email: "me@example.com", password_hash: "hash" });
     // Nor are API keys.
@@ -548,6 +661,8 @@ describe("import / export", () => {
     const pg = await pglite();
     await importInto(pg, source);
     expect(await compareBackends(source, pg)).toEqual([]);
+    expect((await pg.loadAll()).playbooks.map((v) => v.ref).sort()).toEqual(["sdlc@1.0.0", "sdlc@1.1.0"]);
+    expect((await pg.getProject({ code: "PX" }))?.playbook).toBe("sdlc@1.0.0");
     expect(await pg.countUsers()).toBe(0);
     expect(await pg.listApiKeys()).toEqual([]);
 
@@ -573,6 +688,7 @@ describe("import / export", () => {
     const exported = new FileRepository(new FsStore(await tempDir()));
     await exportTo(exported, pg);
     expect(await compareBackends(source, exported)).toEqual([]);
+    expect(await exported.getPlaybookVersion("sdlc@1.1.0")).toEqual(await source.getPlaybookVersion("sdlc@1.1.0"));
     expect(await exported.countUsers()).toBe(0);
     expect(await exported.listApiKeys()).toEqual([]);
   });

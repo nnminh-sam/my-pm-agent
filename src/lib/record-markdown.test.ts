@@ -9,6 +9,9 @@ const pma: Project = {
   title: "PM app",
   status: "active",
   priority: "P1",
+  context: "personal",
+  repos: [],
+  detectors: [],
   created: "2026-09-01",
   last_milestone_number: 2,
   body: "Goal: a tiny PM app.",
@@ -23,6 +26,8 @@ const m1: Milestone = {
   project: pma.id,
   created: "2026-09-01",
   last_task_number: 3,
+  checks: {},
+  deployments: {},
   body: "## Spec\n\nMarkdown store.",
 };
 const m2: Milestone = { ...m1, id: newId(), code: "PMA-M2", number: 2, title: "UI", status: "planned", priority: "P0", deadline: "2026-11-01", body: "" };

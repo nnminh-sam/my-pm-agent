@@ -9,12 +9,13 @@ export function parseMarkdown(text: string): { data: Record<string, unknown>; bo
   return { data, body: text.slice(match[0].length).trim() };
 }
 
-/** Serialize frontmatter + body. Keys keep the given order; undefined/empty values are dropped. */
+/** Serialize frontmatter + body. Keys keep the given order; undefined/empty values (lists and maps) are dropped. */
 export function toMarkdown(data: Record<string, unknown>, body: string): string {
   const clean: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(data)) {
     if (value === undefined || value === null) continue;
     if (Array.isArray(value) && value.length === 0) continue;
+    if (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0) continue;
     clean[key] = value;
   }
   const doc = new YAML.Document(clean);

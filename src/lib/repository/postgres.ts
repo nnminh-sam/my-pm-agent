@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Db, Row, Statement } from "../db";
+import { PlaybookVersion } from "../playbook";
 import {
   ApiKeyMeta,
   MilestoneMeta,
@@ -66,6 +67,15 @@ const apiKeyParams = (key: Omit<ApiKey, "id">) => [
   key.user_id ?? null,
 ];
 
+/** `playbook_versions` (migrations/006_lifecycle.sql): insert-only, and part of loadAll and import / export. */
+const PLAYBOOK_SELECT = `ref, name, version, hash, to_char(synced_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as synced_at, definition`;
+const insertPlaybook = (v: PlaybookVersion): Statement => ({
+  text: "insert into playbook_versions (ref, name, version, hash, synced_at, definition) values ($1, $2, $3, $4, $5::timestamptz, $6::json)",
+  params: [v.ref, v.name, v.version, v.hash, v.synced_at, v.definition],
+});
+const problem = (where: string, err: unknown) =>
+  `${where}: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`;
+
 function fromRow<T extends Entity>(table: Table, row: Row): T {
   const { body, ...meta } = row;
   // NULL columns are absent optional fields, exactly like a missing frontmatter key.
@@ -129,7 +139,20 @@ export class PgRepository implements Repository {
       try {
         items.push(fromRow<T>(table, row));
       } catch (err) {
-        problems.push(`${table}/${row.code}: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`);
+        problems.push(problem(`${table}/${row.code}`, err));
+      }
+    }
+    return items;
+  }
+
+  private async loadPlaybooks(problems: string[]) {
+    const rows = await this.db.query(`select ${PLAYBOOK_SELECT} from playbook_versions order by ref`);
+    const items: PlaybookVersion[] = [];
+    for (const row of rows) {
+      try {
+        items.push(PlaybookVersion.parse(row));
+      } catch (err) {
+        problems.push(problem(`playbook_versions/${row.ref}`, err));
       }
     }
     return items;
@@ -137,12 +160,13 @@ export class PgRepository implements Repository {
 
   async loadAll(): Promise<Records> {
     const problems: string[] = [];
-    const [tasks, milestones, projects] = await Promise.all([
+    const [tasks, milestones, projects, playbooks] = await Promise.all([
       this.loadTable<Task>("tasks", problems),
       this.loadTable<Milestone>("milestones", problems),
       this.loadTable<Project>("projects", problems),
+      this.loadPlaybooks(problems),
     ]);
-    return { tasks, milestones, projects, problems };
+    return { tasks, milestones, projects, playbooks, problems };
   }
 
   private async get<T extends Entity>(table: Table, key: Key) {
@@ -182,6 +206,16 @@ export class PgRepository implements Repository {
   async save(changes: Changes) {
     const list = statements(changes, update);
     if (list.length) await this.db.transaction(list);
+  }
+
+  async getPlaybookVersion(ref: string) {
+    const rows = await this.db.query(`select ${PLAYBOOK_SELECT} from playbook_versions where ref = $1`, [ref]);
+    return rows.length ? PlaybookVersion.parse(rows[0]) : null;
+  }
+
+  async insertPlaybookVersion(version: PlaybookVersion) {
+    const { text, params } = insertPlaybook(version);
+    return (await this.db.query(`${text} on conflict (ref) do nothing returning ref`, params)).length > 0;
   }
 
   async getUser(id: string) {
@@ -251,16 +285,19 @@ export class PgRepository implements Repository {
   /** Whether the workspace is empty; users and API keys don't count (they're never imported or replaced). */
   async isEmpty() {
     const [row] = await this.db.query(
-      "select (select count(*) from projects) + (select count(*) from milestones) + (select count(*) from tasks) + (select count(*) from settings) as n",
+      "select (select count(*) from projects) + (select count(*) from milestones) + (select count(*) from tasks) + (select count(*) from playbook_versions) + (select count(*) from settings) as n",
     );
     return Number(row.n) === 0;
   }
 
-  /** Writes everything, counters included, in one transaction (parents first). */
+  /** Writes everything, counters included, in one transaction (playbook versions first, then parents first). */
   async importAll(data: ImportData, { replace = false } = {}) {
     const list: Statement[] = [];
     // Users and API keys are left alone: they aren't part of the transferred data.
-    if (replace) for (const table of ["tasks", "milestones", "projects", "settings"]) list.push({ text: `delete from ${table}` });
+    if (replace) {
+      for (const table of ["tasks", "milestones", "projects", "playbook_versions", "settings"]) list.push({ text: `delete from ${table}` });
+    }
+    list.push(...data.playbooks.map(insertPlaybook));
     list.push(...statements(data, insert));
     if (data.settings) list.push({ text: "insert into settings (id, data) values (true, $1::json)", params: [JSON.stringify(data.settings)] });
     await this.db.transaction(list);

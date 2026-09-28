@@ -27,6 +27,38 @@ export const LIFECYCLE_STAGES = ["idea", "spec", "design", "plan", "build", "ver
 export const LifecycleStage = z.enum(LIFECYCLE_STAGES);
 export type LifecycleStage = z.infer<typeof LifecycleStage>;
 
+/** Company projects keep only metadata and links in my_pm: no check or rule text. */
+export const PROJECT_CONTEXTS = ["personal", "company"] as const;
+export const ProjectContext = z.enum(PROJECT_CONTEXTS);
+export type ProjectContext = z.infer<typeof ProjectContext>;
+
+/** `sdlc`, `personal`, or a project code such as `PMA`. */
+export const PLAYBOOK_NAME = /^[A-Za-z][A-Za-z0-9-]{0,39}$/;
+export const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+/** How a project pins a playbook version: `PMA@1.2.0`. */
+export const PLAYBOOK_REF = new RegExp(`^${PLAYBOOK_NAME.source.slice(1, -1)}@${VERSION.source.slice(1, -1)}$`);
+
+/** A check with no result is open. */
+export const CHECK_RESULTS = ["passed", "waived", "failed"] as const;
+export const CheckResult = z.object({
+  status: z.enum(CHECK_RESULTS),
+  at: dateStr,
+  by: z.string().optional(),
+  /** Evidence for a pass or failure (a link, a commit, a sentence); the reason for a waiver. */
+  note: z.string().optional(),
+});
+export type CheckResult = z.infer<typeof CheckResult>;
+
+/** A milestone reaching an environment. */
+export const Deployment = z.object({
+  at: dateStr,
+  /** Commit, tag or release. */
+  ref: z.string().optional(),
+  url: z.string().optional(),
+  by: z.string().optional(),
+});
+export type Deployment = z.infer<typeof Deployment>;
+
 /** Opaque primary key (UUID v7); references between records use it, so they survive code changes. */
 const id = z.uuid();
 /** Position within the parent, from its counter: never reused, even after an item moves away. */
@@ -75,6 +107,8 @@ export const MilestoneMeta = z.object({
   number,
   title: z.string(),
   status: MilestoneStatus.default("planned"),
+  /** Where it is in the lifecycle; absent until its project adopts a playbook. repo.ts keeps `status` in step. */
+  stage: LifecycleStage.optional(),
   project: id,
   /** Falls back to the project's priority, then P2. */
   priority: Priority.optional(),
@@ -82,6 +116,10 @@ export const MilestoneMeta = z.object({
   created: dateStr,
   /** The highest task number handed out; only the repository's allocateNumbers moves it. */
   last_task_number: counter,
+  /** Results of its playbook's checks, by key (`spec.accepted`); a check without one is open. */
+  checks: z.record(z.string(), CheckResult).default({}),
+  /** The environments it has reached, by name (`dev`, `prod`). */
+  deployments: z.record(z.string(), Deployment).default({}),
 });
 export type MilestoneMeta = z.infer<typeof MilestoneMeta>;
 export type Milestone = MilestoneMeta & { body: string };
@@ -99,6 +137,13 @@ export const ProjectMeta = z.object({
   status: ProjectStatus.default("active"),
   priority: Priority.default("P2"),
   deadline: dateStr.optional(),
+  context: ProjectContext.default("personal"),
+  /** The pinned playbook version (`PMA@1.2.0`), one of the stored playbook versions; absent until adopted. */
+  playbook: z.string().regex(PLAYBOOK_REF, "expected a playbook version like PMA@1.2.0").optional(),
+  /** Normalized git remotes (`github.com/owner/repo`): how a session in a repo finds its project. */
+  repos: z.array(z.string()).default([]),
+  /** Playbook detectors that fired in its repos (e.g. `migrations`); their checks apply to the project. */
+  detectors: z.array(z.string()).default([]),
   created: dateStr,
   /** The highest milestone number handed out; only the repository's allocateNumbers moves it. */
   last_milestone_number: counter,

@@ -26,6 +26,7 @@ export async function importInto(target: PgRepository, source: Repository, { rep
 export async function exportTo(target: FileRepository, source: Repository) {
   const data = await readAll(source);
   if (data.settings) await target.writeSettings(data.settings);
+  for (const version of data.playbooks) await target.insertPlaybookVersion(version);
   await target.insert(data);
   return data;
 }
@@ -53,6 +54,11 @@ export async function compareBackends(a: Repository, b: Repository, at = new Dat
     ...diffRecords("project", wa.projects, wb.projects),
     ...diffRecords("milestone", wa.milestones, wb.milestones),
     ...diffRecords("task", wa.tasks, wb.tasks),
+    ...diffRecords(
+      "playbook",
+      wa.playbooks.map((v) => ({ id: v.ref, ...v })),
+      wb.playbooks.map((v) => ({ id: v.ref, ...v })),
+    ),
     ...(isDeepStrictEqual(wa.problems, wb.problems) ? [] : ["problems differ"]),
   ];
   if (!isDeepStrictEqual(scheduleFor(wa, at), scheduleFor(wb, at))) diffs.push("schedule differs");
