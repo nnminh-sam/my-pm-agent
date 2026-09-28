@@ -308,6 +308,45 @@ function projectWarnings(project: Project, pinned: PlaybookVersion | undefined, 
   return warnings;
 }
 
+export interface MilestoneContext {
+  project: Project;
+  /** The project's pinned version. */
+  version: PlaybookVersion;
+  /** The milestone's own tasks. */
+  tasks: Task[];
+  settings: Pick<Settings, "max_task_hours">;
+  at_risk?: boolean;
+  /** Its first scheduled task, which "keep building" points at. */
+  firstTask?: Task;
+}
+
+/** One milestone against its project's pinned playbook. */
+export function milestoneLifecycle(milestone: Milestone, ctx: MilestoneContext): MilestoneLifecycle {
+  const { project, version, settings } = ctx;
+  const environments = version.definition.environments.map((e) => e.name);
+  const entries = projectChecks(version.definition, version.ref, project.detectors);
+  const stage = milestone.stage ?? "idea";
+  const checks = entries.map((e) => evaluate(e, milestone, ctx.tasks, environments, settings.max_task_hours, project.context));
+  const finished = milestone.status === "done" || milestone.status === "cancelled";
+  return {
+    code: milestone.code,
+    id: milestone.id,
+    title: milestone.title,
+    project: project.code,
+    status: milestone.status,
+    stage,
+    priority: inheritedPriority(milestone.priority, project.priority),
+    deadline: earliestDate(milestone.deadline, project.deadline),
+    at_risk: Boolean(ctx.at_risk),
+    environments: environments.map((name) => ({ name, reached: milestone.deployments[name] })),
+    checks,
+    open: checks.filter((c) => c.stage === stage && pending(c)).map((c) => c.key),
+    next: finished
+      ? undefined
+      : nextAction(milestone, stage, checks, new Map(entries.map((e) => [e.key, e])), environments, ctx.firstTask),
+  };
+}
+
 export function lifecycle({ projects, milestones, tasks, playbooks, settings, plan }: LifecycleInput): LifecycleResult {
   const versions = new Map(playbooks.map((v) => [v.ref, v]));
   const latest = latestVersions(playbooks);
@@ -330,42 +369,28 @@ export function lifecycle({ projects, milestones, tasks, playbooks, settings, pl
     result.warnings.push(...warnings);
     if (!pinned) continue;
 
-    const playbook = pinned.definition;
-    const environments = playbook.environments.map((e) => e.name);
-    const entries = projectChecks(playbook, pinned.ref, project.detectors);
-    const byKey = new Map(entries.map((e) => [e.key, e]));
     const view: ProjectLifecycle = {
       code: project.code,
       title: project.title,
       context: project.context,
       playbook: pinned.ref,
-      environments,
+      environments: pinned.definition.environments.map((e) => e.name),
       warnings,
       milestones: [],
     };
 
     for (const milestone of milestones.filter((m) => m.project === project.id).sort((a, b) => compareCodes(a.code, b.code))) {
-      const stage = milestone.stage ?? "idea";
-      const own = tasksOf.get(milestone.id) ?? [];
-      const checks = entries.map((e) => evaluate(e, milestone, own, environments, settings.max_task_hours, project.context));
-      const finished = milestone.status === "done" || milestone.status === "cancelled";
-      const item: MilestoneLifecycle = {
-        code: milestone.code,
-        id: milestone.id,
-        title: milestone.title,
-        project: project.code,
-        status: milestone.status,
-        stage,
-        priority: inheritedPriority(milestone.priority, project.priority),
-        deadline: earliestDate(milestone.deadline, project.deadline),
+      const item = milestoneLifecycle(milestone, {
+        project,
+        version: pinned,
+        tasks: tasksOf.get(milestone.id) ?? [],
+        settings,
         at_risk: atRisk.has(milestone.id),
-        environments: environments.map((name) => ({ name, reached: milestone.deployments[name] })),
-        checks,
-        open: checks.filter((c) => c.stage === stage && pending(c)).map((c) => c.key),
-        next: finished ? undefined : nextAction(milestone, stage, checks, byKey, environments, firstScheduled.get(milestone.id)),
-      };
+        firstTask: firstScheduled.get(milestone.id),
+      });
       view.milestones.push(item);
-      if (finished) continue;
+      const { stage } = item;
+      if (milestone.status === "done" || milestone.status === "cancelled") continue;
       if (stage === "build") result.wip.in_build.push(milestone.code);
       if (stage === "idea" || !item.next) continue;
       result.next.push({

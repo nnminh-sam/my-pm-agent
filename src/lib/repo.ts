@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   compareCodes,
@@ -13,16 +14,20 @@ import {
   type CodeKind,
 } from "./codes";
 import { pert } from "./estimation";
-import { comparePlaybookVersions, type PlaybookVersion } from "./playbook";
+import { milestoneLifecycle, nextStages, projectChecks, statusForStage } from "./lifecycle";
+import { Playbook, PlaybookVersion, comparePlaybookVersions, parsePlaybookRef, playbookRef } from "./playbook";
 import { getRepository, type Repository } from "./repository";
 import type { Changes, Key } from "./repository/types";
 import { todayIn } from "./time";
 import {
   ApiKey,
+  LIFECYCLE_STAGES,
+  LifecycleStage,
   Milestone,
   MilestoneStatus,
   Priority,
   Project,
+  ProjectContext,
   ProjectStatus,
   Settings,
   SettingsPatch,
@@ -30,6 +35,7 @@ import {
   TaskStatus,
   User,
   dateStr,
+  type Deployment,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -119,6 +125,11 @@ export const NewProject = z.object({
   priority: Priority.optional().describe("Default for its milestones and tasks (P2 if omitted)."),
   deadline: dateStr.optional().describe("Applies to every task in the project."),
   status: ProjectStatus.optional(),
+  context: ProjectContext.optional().describe("personal (default) or company: company projects keep only metadata and links."),
+  repos: z
+    .array(z.string())
+    .optional()
+    .describe("Its git remotes (any form: https, ssh, git@host:owner/repo); stored as github.com/owner/repo."),
 });
 export type NewProject = z.infer<typeof NewProject>;
 
@@ -129,6 +140,12 @@ export const ProjectPatch = z.object({
   priority: Priority.optional(),
   deadline: dateStr.nullable().optional(),
   status: ProjectStatus.optional().describe("on_hold / done / cancelled take the project's tasks off the schedule."),
+  context: ProjectContext.optional(),
+  repos: z.array(z.string()).optional().describe("Replaces its git remotes (any form; stored normalized)."),
+  detectors: z
+    .array(z.string())
+    .optional()
+    .describe("Replaces the playbook detectors that fired in its repos (e.g. migrations); their checks apply to the project."),
 });
 export type ProjectPatch = z.infer<typeof ProjectPatch>;
 
@@ -455,12 +472,15 @@ export async function createMilestone(input: NewMilestone): Promise<Milestone> {
   const project = await getProject(input.project);
   const repository = getRepository();
   const number = await repository.allocateNumbers("milestones", project.id, 1);
+  // On a lifecycle, a new milestone starts at spec (it has, or is about to get, a spec), or idea if it's only an idea.
+  const stage: LifecycleStage | undefined = project.playbook ? (input.status === "idea" ? "idea" : "spec") : undefined;
   const milestone: Milestone = {
     id: newId(),
     code: milestoneCode(project.code, number),
     number,
     title: input.title,
-    status: input.status ?? "planned",
+    status: input.status ?? (stage ? statusForStage(stage) : "planned"),
+    stage,
     project: project.id,
     priority: input.priority,
     deadline: input.deadline,
@@ -513,6 +533,8 @@ export async function createProject(input: NewProject): Promise<Project> {
   const settings = await getSettings();
   const code = ProjectCode.parse(input.code);
   await assertCodeFree(code);
+  const repos = normalizeRepos(input.repos ?? []);
+  if (repos.length) assertReposFree(await loadWorkspace(), repos);
   const project: Project = {
     id: newId(),
     code,
@@ -520,8 +542,8 @@ export async function createProject(input: NewProject): Promise<Project> {
     status: input.status ?? "active",
     priority: input.priority ?? "P2",
     deadline: input.deadline,
-    context: "personal",
-    repos: [],
+    context: input.context ?? "personal",
+    repos,
     detectors: [],
     created: todayIn(settings.timezone),
     last_milestone_number: 0,
@@ -539,6 +561,12 @@ export async function updateProject(ref: string, patch: ProjectPatch): Promise<P
   if (patch.priority !== undefined) next.priority = patch.priority;
   if (patch.deadline !== undefined) next.deadline = patch.deadline ?? undefined;
   if (patch.status !== undefined) next.status = patch.status;
+  if (patch.context !== undefined) next.context = patch.context;
+  if (patch.detectors !== undefined) next.detectors = normalizeDetectors(patch.detectors);
+  if (patch.repos !== undefined) {
+    next.repos = normalizeRepos(patch.repos);
+    assertReposFree(await loadWorkspace(), next.repos, project.id);
+  }
   let changes: Changes = { projects: [next] };
   const code = patch.code === undefined ? undefined : ProjectCode.parse(patch.code);
   if (code !== undefined && code !== project.code) {
@@ -558,6 +586,241 @@ export async function updateProject(ref: string, patch: ProjectPatch): Promise<P
   }
   await getRepository().save(changes);
   return changes.projects!.find((p) => p.id === next.id)!;
+}
+
+/**
+ * A git remote as `host/owner/repo` in lowercase, whatever form it came in (https://github.com/Owner/Repo.git,
+ * git@github.com:owner/repo, ssh://git@github.com/owner/repo), so any clone of a repo finds the same project.
+ * Credentials are dropped.
+ */
+export function normalizeRepo(remote: string): string {
+  let s = remote.trim();
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(s);
+  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(\S+)$/.exec(s);
+  if (!hasScheme && scp) s = `${scp[1]}/${scp[2]}`;
+  s = s
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+    .replace(/^[^@/]+@/, "")
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+  if (!/^[a-z0-9.-]+(:\d+)?(\/[^\s/]+)+$/.test(s)) throw new Error(`"${remote}" isn't a git remote like github.com/owner/repo`);
+  return s;
+}
+
+const normalizeRepos = (repos: string[]) => [...new Set(repos.map(normalizeRepo))];
+
+/** A repo belongs to one project, so a session in it always finds the same one. */
+function assertReposFree(ws: Pick<Workspace, "projects">, repos: string[], projectId?: string) {
+  for (const repo of repos) {
+    const other = ws.projects.find((p) => p.id !== projectId && p.repos.includes(repo));
+    if (other) throw new Error(`${repo} already belongs to project ${other.code}`);
+  }
+}
+
+const DETECTOR = /^[a-z][a-z0-9_-]*$/;
+function normalizeDetectors(detectors: string[]) {
+  const names = [...new Set(detectors.map((d) => d.trim().toLowerCase()))];
+  const bad = names.filter((d) => !DETECTOR.test(d));
+  if (bad.length) throw new Error(`Detector names are lowercase letters, digits, - or _ (got ${bad.join(", ")})`);
+  return names;
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle: playbook versions, pins, stages, check results and deployments. What's open and where a milestone
+// can go next come from lifecycle.ts, so these writes and the engine always agree.
+// ---------------------------------------------------------------------------
+
+/** JSON with object keys sorted, so the same content hashes the same whatever order it was sent in. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export const hashPlaybook = (definition: Playbook) => createHash("sha256").update(canonicalJson(definition)).digest("hex");
+
+/** The company layer itself, or a playbook compiled from it. */
+export const isCompanyPlaybook = (p: Playbook) => p.name === "company" || p.layers.some((l) => l.name === "company");
+
+/** What a company playbook keeps in my_pm (D1): keys, kinds, names and links; no check, principle or environment text. */
+function metadataOnly(p: Playbook): Playbook {
+  const bare = (checks: Playbook["checks"]) =>
+    Object.fromEntries(
+      Object.entries(checks).map(([key, check]) => {
+        const copy = { ...check };
+        delete copy.text;
+        return [key, copy];
+      }),
+    );
+  return {
+    ...p,
+    principles: Object.fromEntries(Object.keys(p.principles).map((key) => [key, ""])),
+    environments: p.environments.map(({ name, url }) => (url ? { name, url } : { name })),
+    checks: bare(p.checks),
+    detectors: p.detectors.map((d) => ({ ...d, add: bare(d.add) })),
+  };
+}
+
+/**
+ * Stores a compiled playbook (as pm-flow sends it) as a new version. Sending the same content again changes
+ * nothing; different content under a stored version is refused, since versions never change.
+ */
+export async function syncPlaybook(input: unknown, at: Date = new Date()): Promise<{ version: PlaybookVersion; created: boolean }> {
+  const parsed = Playbook.parse(input);
+  const definition = isCompanyPlaybook(parsed) ? metadataOnly(parsed) : parsed;
+  const hash = hashPlaybook(definition);
+  const ref = playbookRef(definition);
+  const repository = getRepository();
+  const changed = () => new Error(`${ref} is already stored with different content; versions never change, so release it as a new version`);
+  const existing = await repository.getPlaybookVersion(ref);
+  if (existing) {
+    if (existing.hash !== hash) throw changed();
+    return { version: existing, created: false };
+  }
+  const version = PlaybookVersion.parse({
+    ref,
+    name: definition.name,
+    version: definition.version,
+    hash,
+    synced_at: at.toISOString(),
+    definition,
+  });
+  if (await repository.insertPlaybookVersion(version)) return { version, created: true };
+  // Another sync of the same version got there first.
+  const stored = await repository.getPlaybookVersion(ref);
+  if (stored?.hash !== hash) throw changed();
+  return { version: stored, created: false };
+}
+
+/**
+ * Pins a project to a stored playbook version: to adopt one, upgrade, or roll back. `stages` (milestone code →
+ * stage) places existing milestones on the lifecycle when adopting, and puts their status in step with the stage.
+ */
+export async function setPlaybookVersion(
+  projectRef: string,
+  ref: string,
+  stages: Record<string, LifecycleStage> = {},
+): Promise<{ project: Project; milestones: Milestone[] }> {
+  if (!parsePlaybookRef(ref)) throw new Error(`"${ref}" isn't a playbook version like PMA@1.2.0`);
+  const ws = await loadWorkspace();
+  const project = resolve("project", ws.projects, projectRef);
+  if (!ws.playbooks.some((v) => v.ref === ref)) throw new NotFoundError(`Playbook ${ref} isn't stored; sync it first`);
+  const milestones = Object.entries(stages).map(([milestoneRef, stage]): Milestone => {
+    const milestone = resolve("milestone", ws.milestones, milestoneRef);
+    if (milestone.project !== project.id) throw new Error(`${milestone.code} isn't a milestone of ${project.code}`);
+    return { ...milestone, stage: LifecycleStage.parse(stage), status: statusForStage(stage) };
+  });
+  const next: Project = { ...project, playbook: ref };
+  await getRepository().save({ projects: [next], milestones });
+  return { project: next, milestones };
+}
+
+/** A milestone with its project and the project's pinned version, or an error saying which is missing. */
+function onLifecycle(ws: Workspace, ref: string) {
+  const milestone = resolve("milestone", ws.milestones, ref);
+  const project = ws.projects.find((p) => p.id === milestone.project);
+  if (!project) throw new Error(`${milestone.code}'s project doesn't exist`);
+  if (!project.playbook) throw new Error(`${project.code} has no playbook yet; pin one first (set_playbook_version)`);
+  const version = ws.playbooks.find((v) => v.ref === project.playbook);
+  if (!version) throw new Error(`${project.code} is pinned to ${project.playbook}, which isn't stored`);
+  return { milestone, project, version };
+}
+
+/**
+ * Moves a milestone to its next stage (after learn: `done`, or `maintain`), refusing while any of the current
+ * stage's checks are open or failed; pass or waive them first. Moving back to an earlier stage is always allowed.
+ */
+export async function advanceStage(ref: string, to?: LifecycleStage | "done"): Promise<Milestone> {
+  const ws = await loadWorkspace();
+  const { milestone, project, version } = onLifecycle(ws, ref);
+  if (milestone.status === "done" || milestone.status === "cancelled") throw new Error(`${milestone.code} is ${milestone.status}`);
+  const view = milestoneLifecycle(milestone, {
+    project,
+    version,
+    tasks: ws.tasks.filter((t) => t.milestone === milestone.id),
+    settings: ws.settings,
+  });
+  const forward = nextStages(view.stage);
+  const target = to ?? forward[0];
+  const back = target !== "done" && LIFECYCLE_STAGES.indexOf(target) < LIFECYCLE_STAGES.indexOf(view.stage);
+  if (!back) {
+    if (!forward.includes(target)) {
+      throw new Error(`${milestone.code} is in ${view.stage}: it can move on to ${forward.join(" or ")}, or back to an earlier stage`);
+    }
+    const open = view.checks
+      .filter((c) => view.open.includes(c.key))
+      .map((c) => `${c.key}${c.env ? ` (${c.env})` : ""}${c.state === "failed" ? " failed" : ""}${c.detail ? `: ${c.detail}` : ""}`);
+    if (open.length) {
+      throw new Error(`${milestone.code} can't leave ${view.stage} yet. Open: ${open.join("; ")}. Pass them, or waive them with a reason.`);
+    }
+  }
+  const next: Milestone =
+    target === "done" ? { ...milestone, stage: view.stage, status: "done" } : { ...milestone, stage: target, status: statusForStage(target) };
+  await getRepository().save({ milestones: [next] });
+  return next;
+}
+
+export const CHECK_WRITES = ["passed", "failed", "waived", "open"] as const;
+export type CheckWrite = (typeof CHECK_WRITES)[number];
+
+const defined = <T extends object>(value: T) => Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T;
+
+/**
+ * Records a check result on a milestone, for any stage (evidence can come early): passed or failed with evidence,
+ * waived with a reason, or `open` to clear it. The check must be one of the project's (playbook + fired detectors).
+ */
+export async function setCheck(ref: string, key: string, status: CheckWrite, note?: string, by?: string): Promise<Milestone> {
+  const ws = await loadWorkspace();
+  const { milestone, project, version } = onLifecycle(ws, ref);
+  const keys = projectChecks(version.definition, version.ref, project.detectors).map((e) => e.key);
+  if (!keys.includes(key)) throw new Error(`${key} isn't a check of ${project.code}'s playbook ${version.ref} (checks: ${keys.join(", ")})`);
+  const text = note?.trim() || undefined;
+  if (status === "waived" && !text) throw new Error("A waiver needs a reason");
+  const checks = { ...milestone.checks };
+  if (status === "open") delete checks[key];
+  else checks[key] = defined({ status, at: todayIn(ws.settings.timezone), by: by?.trim() || undefined, note: text });
+  const next: Milestone = { ...milestone, checks };
+  await getRepository().save({ milestones: [next] });
+  return next;
+}
+
+export const DeploymentInput = z.object({
+  at: dateStr.optional().describe("When it reached the environment (default today)."),
+  ref: z.string().optional().describe("Commit, tag or release."),
+  url: z.string().optional(),
+  by: z.string().optional(),
+  note: z.string().optional().describe("Required when an earlier environment hasn't been reached: why it went out of order."),
+});
+export type DeploymentInput = z.infer<typeof DeploymentInput>;
+
+/** Records that a milestone reached one of its playbook's environments, in promotion order unless a reason is given. */
+export async function recordDeployment(ref: string, env: string, input: DeploymentInput = {}): Promise<Milestone> {
+  const ws = await loadWorkspace();
+  const { milestone, project, version } = onLifecycle(ws, ref);
+  const environments = version.definition.environments.map((e) => e.name);
+  const index = environments.indexOf(env);
+  if (index < 0) throw new Error(`${env} isn't an environment of ${project.code} (${environments.join(" → ")})`);
+  const skipped = environments.slice(0, index).filter((e) => !milestone.deployments[e]);
+  const note = input.note?.trim() || undefined;
+  if (skipped.length && !note) {
+    throw new Error(`${milestone.code} hasn't reached ${skipped.join(", ")} yet; deploy there first, or give a reason for going out of order`);
+  }
+  const deployment: Deployment = defined({
+    at: input.at ?? todayIn(ws.settings.timezone),
+    ref: input.ref?.trim() || undefined,
+    url: input.url?.trim() || undefined,
+    by: input.by?.trim() || undefined,
+    note,
+  });
+  const next: Milestone = { ...milestone, deployments: { ...milestone.deployments, [env]: deployment } };
+  await getRepository().save({ milestones: [next] });
+  return next;
 }
 
 // ---------------------------------------------------------------------------

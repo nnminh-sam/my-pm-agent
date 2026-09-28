@@ -56,6 +56,8 @@ export const Deployment = z.object({
   ref: z.string().optional(),
   url: z.string().optional(),
   by: z.string().optional(),
+  /** Why it reached this environment before an earlier one. */
+  note: z.string().optional(),
 });
 export type Deployment = z.infer<typeof Deployment>;
 

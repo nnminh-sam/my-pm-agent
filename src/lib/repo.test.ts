@@ -393,6 +393,143 @@ describe.each(backends)("$name backend", (backend) => {
     });
   });
 
+  describe("lifecycle writes", () => {
+    let seed: Record<string, unknown>;
+    beforeAll(async () => {
+      seed = YAML.parse(await readFile(new URL("./playbooks/sdlc.yaml", import.meta.url), "utf8"));
+    });
+    /** A project playbook for LW, compiled from sdlc. */
+    const lw = (extra: Record<string, unknown> = {}) => ({
+      ...seed,
+      name: "LW",
+      version: "1.0.0",
+      layers: [{ name: "sdlc", version: "1.0.0" }],
+      ...extra,
+    });
+
+    it("syncs a playbook version once, whatever its key order, and refuses changed content", async () => {
+      const first = await repo.syncPlaybook(lw(), new Date("2026-09-28T09:00:00Z"));
+      expect(first.created).toBe(true);
+      expect(first.version).toMatchObject({ ref: "LW@1.0.0", name: "LW", version: "1.0.0", synced_at: "2026-09-28T09:00:00.000Z" });
+      expect(first.version.hash).toMatch(/^[0-9a-f]{64}$/);
+      const reordered = lw({ checks: Object.fromEntries(Object.entries(seed.checks as object).reverse()) });
+      expect(await repo.syncPlaybook(reordered)).toEqual({ version: first.version, created: false });
+      await expect(repo.syncPlaybook(lw({ software: "something else" }))).rejects.toThrow(
+        "LW@1.0.0 is already stored with different content; versions never change, so release it as a new version",
+      );
+      await expect(repo.syncPlaybook({ name: "LW" })).rejects.toThrow();
+    });
+
+    it("keeps only the metadata of a company playbook", async () => {
+      const { version } = await repo.syncPlaybook(
+        lw({
+          name: "ACME",
+          layers: [
+            { name: "sdlc", version: "1.0.0" },
+            { name: "company", version: "1.0.0" },
+          ],
+          environments: [{ name: "dev", db: "acme-dev", url: "https://dev.acme.test" }, { name: "prod" }],
+        }),
+      );
+      const d = version.definition;
+      expect(Object.values(d.checks).every((c) => c.text === undefined)).toBe(true);
+      expect(d.detectors[0].add["release.migration_paired"].text).toBeUndefined();
+      expect(Object.values(d.principles).every((text) => text === "")).toBe(true);
+      expect(d.environments).toEqual([{ name: "dev", url: "https://dev.acme.test" }, { name: "prod" }]);
+      expect(await backendRepo.getPlaybookVersion("ACME@1.0.0")).toEqual(version);
+    });
+
+    it("pins a project to a stored version and places its milestones on the lifecycle", async () => {
+      await repo.createProject({ title: "LW", code: "LW" });
+      expect((await repo.createMilestone({ title: "Old", project: "LW" })).stage).toBeUndefined();
+      await expect(repo.setPlaybookVersion("LW", "LW@9.0.0")).rejects.toThrow("Playbook LW@9.0.0 isn't stored; sync it first");
+      await expect(repo.setPlaybookVersion("LW", "LW")).rejects.toThrow(`"LW" isn't a playbook version like PMA@1.2.0`);
+      await expect(repo.setPlaybookVersion("LW", "LW@1.0.0", { "LC-M1": "build" })).rejects.toThrow("LC-M1 isn't a milestone of LW");
+
+      const { project, milestones } = await repo.setPlaybookVersion("LW", "LW@1.0.0", { "lw-m1": "release" });
+      expect(project.playbook).toBe("LW@1.0.0");
+      expect(milestones).toEqual([expect.objectContaining({ code: "LW-M1", stage: "release", status: "in_progress" })]);
+      expect(await repo.getMilestone("LW-M1")).toMatchObject({ stage: "release", status: "in_progress" });
+      expect((await repo.getProject("LW")).playbook).toBe("LW@1.0.0");
+      // New milestones start at spec, or at idea when that's all they are.
+      expect(await repo.createMilestone({ title: "Next", project: "LW" })).toMatchObject({ code: "LW-M2", stage: "spec", status: "planned" });
+      expect(await repo.createMilestone({ title: "Maybe", project: "LW", status: "idea" })).toMatchObject({ stage: "idea", status: "idea" });
+    });
+
+    it("advances only when the current stage's checks pass, and moves back freely", async () => {
+      await expect(repo.advanceStage("LW-M2")).rejects.toThrow(
+        "LW-M2 can't leave spec yet. Open: spec.accepted. Pass them, or waive them with a reason.",
+      );
+      await expect(repo.advanceStage("LW-M2", "build")).rejects.toThrow("LW-M2 is in spec: it can move on to design, or back to an earlier stage");
+      await expect(repo.setCheck("LW-M2", "spec.nope", "passed")).rejects.toThrow("spec.nope isn't a check of LW's playbook LW@1.0.0");
+      await expect(repo.setCheck("LW-M2", "spec.accepted", "waived", "  ")).rejects.toThrow("A waiver needs a reason");
+
+      const passed = await repo.setCheck("LW-M2", "spec.accepted", "passed", " https://docs.lw.test/spec ", "claude");
+      expect(passed.checks["spec.accepted"]).toEqual({
+        status: "passed",
+        at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        by: "claude",
+        note: "https://docs.lw.test/spec",
+      });
+      expect(await repo.advanceStage("LW-M2")).toMatchObject({ stage: "design", status: "planned" });
+      await repo.setCheck("LW-M2", "design.decisions_recorded", "waived", "Nothing hard to reverse");
+      expect(await repo.advanceStage("LW-M2")).toMatchObject({ stage: "plan" });
+      await expect(repo.advanceStage("LW-M2")).rejects.toThrow("Open: plan.estimated: no tasks yet; plan.small_tasks: no tasks yet.");
+
+      // Back to spec needs nothing; clearing a result reopens its check.
+      expect(await repo.advanceStage("LW-M2", "spec")).toMatchObject({ stage: "spec", status: "planned" });
+      expect((await repo.setCheck("LW-M2", "spec.accepted", "open")).checks["spec.accepted"]).toBeUndefined();
+      expect(Object.keys((await repo.getMilestone("LW-M2")).checks)).toEqual(["design.decisions_recorded"]);
+    });
+
+    it("finishes after learn, through maintain when there are playbook changes", async () => {
+      await repo.setPlaybookVersion("LW", "LW@1.0.0", { "LW-M3": "learn" });
+      await repo.createTasks([{ title: "t", milestone: "LW-M3", estimate: 1 }]);
+      await repo.logTime("LW-M3-T1", 0.5, undefined, true);
+      await expect(repo.advanceStage("LW-M3")).rejects.toThrow("Open: learn.retro.");
+      await repo.setCheck("LW-M3", "learn.retro", "passed");
+      expect(await repo.advanceStage("LW-M3", "maintain")).toMatchObject({ stage: "maintain", status: "in_progress" });
+      await expect(repo.advanceStage("LW-M3")).rejects.toThrow("Open: maintain.applied.");
+      await repo.setCheck("LW-M3", "maintain.applied", "waived", "No changes after all");
+      expect(await repo.advanceStage("LW-M3")).toMatchObject({ stage: "maintain", status: "done" });
+      await expect(repo.advanceStage("LW-M3")).rejects.toThrow("LW-M3 is done");
+    });
+
+    it("records deployments in promotion order, or out of order with a reason", async () => {
+      await expect(repo.recordDeployment("LW-M1", "qa")).rejects.toThrow("qa isn't an environment of LW (dev → staging → prod)");
+      await expect(repo.recordDeployment("LW-M1", "prod")).rejects.toThrow("LW-M1 hasn't reached dev, staging yet");
+      const hotfix = await repo.recordDeployment("LW-M1", "prod", { at: "2026-09-26", ref: "abc123", note: "hotfix" });
+      expect(hotfix.deployments).toEqual({ prod: { at: "2026-09-26", ref: "abc123", note: "hotfix" } });
+      const dev = await repo.recordDeployment("LW-M1", "dev", { url: "https://dev.lw.test" });
+      expect(dev.deployments.dev).toEqual({ at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), url: "https://dev.lw.test" });
+      expect((await repo.getMilestone("LW-M1")).deployments).toEqual(dev.deployments);
+      await expect(repo.recordDeployment("LC-M2", "dev")).rejects.toThrow("Milestone LC-M2 not found");
+      await expect(repo.recordDeployment("WEB-M1", "dev")).rejects.toThrow("WEB has no playbook yet; pin one first");
+    });
+
+    it("stores normalized, unique repos and detectors on projects", async () => {
+      const project = await repo.createProject({
+        title: "Repos",
+        code: "RP",
+        context: "company",
+        repos: ["git@github.com:Acme/Billing.git", "https://github.com/acme/billing"],
+      });
+      expect(project).toMatchObject({ context: "company", repos: ["github.com/acme/billing"] });
+      await expect(repo.createProject({ title: "Dup", code: "RQ", repos: ["ssh://git@github.com/acme/billing"] })).rejects.toThrow(
+        "github.com/acme/billing already belongs to project RP",
+      );
+      // LC took github.com/acme/api earlier.
+      await expect(repo.updateProject("RP", { repos: ["github.com/acme/api"] })).rejects.toThrow("already belongs to project LC");
+      const updated = await repo.updateProject("RP", {
+        repos: ["https://token@github.com/acme/shop/"],
+        detectors: ["Migrations", "migrations", "docker"],
+      });
+      expect(updated).toMatchObject({ repos: ["github.com/acme/shop"], detectors: ["migrations", "docker"] });
+      await expect(repo.updateProject("RP", { detectors: ["no spaces"] })).rejects.toThrow("Detector names are lowercase");
+      await expect(repo.updateProject("RP", { repos: ["not a remote"] })).rejects.toThrow(`"not a remote" isn't a git remote`);
+    });
+  });
+
   describe("users", () => {
     const hash = "scrypt$16384$8$1$c2FsdA$aGFzaA";
 
@@ -549,6 +686,24 @@ describe.each(backends)("$name backend", (backend) => {
       for (const hash of [h1, h2, h3]) expect(dump).not.toContain(hash);
       expect(dump).not.toContain('"K-');
     });
+  });
+});
+
+describe("normalizeRepo", () => {
+  it("reads every common remote form as host/owner/repo", () => {
+    for (const remote of [
+      "https://github.com/Owner/Repo.git",
+      "http://github.com/owner/repo/",
+      "git@github.com:owner/repo.git",
+      "ssh://git@github.com/owner/repo",
+      "https://user:token@github.com/owner/repo",
+      "github.com/owner/repo",
+    ]) {
+      expect(repo.normalizeRepo(remote)).toBe("github.com/owner/repo");
+    }
+    expect(repo.normalizeRepo("ssh://git@gitlab.acme.test:2222/team/app.git")).toBe("gitlab.acme.test:2222/team/app");
+    expect(repo.normalizeRepo("https://dev.azure.com/org/project/_git/repo")).toBe("dev.azure.com/org/project/_git/repo");
+    for (const bad of ["", "repo", "https://", "not a remote"]) expect(() => repo.normalizeRepo(bad)).toThrow();
   });
 });
 
