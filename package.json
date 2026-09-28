@@ -1,0 +1,45 @@
+{
+  "name": "my_pm",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:smoke": "node --env-file-if-exists=.env.local scripts/db-smoke.mjs",
+    "db:migrate": "node --env-file-if-exists=.env.local --import tsx scripts/db-migrate.ts",
+    "db:import": "node --env-file-if-exists=.env.local --import tsx scripts/db-import.ts",
+    "db:export": "node --env-file-if-exists=.env.local --import tsx scripts/db-export.ts",
+    "auth:create-key": "node --env-file-if-exists=.env.local --import tsx scripts/api-keys.ts create",
+    "auth:list-keys": "node --env-file-if-exists=.env.local --import tsx scripts/api-keys.ts list",
+    "auth:revoke-key": "node --env-file-if-exists=.env.local --import tsx scripts/api-keys.ts revoke"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.1.0",
+    "@neondatabase/serverless": "^1.1.0",
+    "mcp-handler": "^2.2.0",
+    "next": "16.3.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^24.19.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.6",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.0.2"
+  }
+}

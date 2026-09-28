@@ -1,0 +1,579 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { PGlite } from "@electric-sql/pglite";
+import { Client } from "@neondatabase/serverless";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { newId } from "./codes";
+import { neonDb, type Db, type Row } from "./db";
+import { migrate, type MigrationSession } from "./migrate";
+import * as repo from "./repo";
+import { setRepository, type Repository } from "./repository";
+import { FileRepository } from "./repository/file";
+import { PgRepository } from "./repository/postgres";
+import { FsStore } from "./store/fs";
+import { todayIn } from "./time";
+import { compareBackends, exportTo, importInto, readAll } from "./transfer";
+import type { Task } from "./types";
+
+const tempDirs: string[] = [];
+async function tempDir() {
+  const dir = await mkdtemp(path.join(tmpdir(), "my-pm-"));
+  tempDirs.push(dir);
+  return dir;
+}
+afterAll(async () => {
+  setRepository(undefined);
+  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+async function pglite(): Promise<PgRepository> {
+  const pg = new PGlite();
+  await migrate({
+    exec: async (sql) => {
+      await pg.exec(sql);
+    },
+    query: async (text, params) => (await pg.query<Row>(text, params)).rows,
+  });
+  const db: Db = {
+    query: async (text, params) => (await pg.query<Row>(text, params)).rows,
+    transaction: (statements) =>
+      pg.transaction(async (tx) => {
+        const results: Row[][] = [];
+        for (const s of statements) results.push((await tx.query<Row>(s.text, s.params)).rows);
+        return results;
+      }),
+  };
+  return new PgRepository(db);
+}
+
+/** A real Neon database, only when TEST_DATABASE_URL points at a disposable branch. It is wiped first. */
+async function neonTestDb(url: string): Promise<PgRepository> {
+  const client = new Client(url);
+  await client.connect();
+  const session: MigrationSession = {
+    exec: async (sql) => {
+      await client.query(sql);
+    },
+    query: async (text, params) => (await client.query(text, params)).rows,
+  };
+  try {
+    await migrate(session);
+    await session.exec("truncate tasks, milestones, projects, settings, users, api_keys restart identity");
+  } finally {
+    await client.end();
+  }
+  return new PgRepository(neonDb(url));
+}
+
+const backends: { name: string; setup: () => Promise<Repository>; dir?: string }[] = [
+  {
+    name: "fs",
+    async setup() {
+      const dir = await tempDir();
+      this.dir = dir;
+      return new FileRepository(new FsStore(dir));
+    },
+  },
+  { name: "postgres (pglite)", setup: pglite },
+];
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+if (testDatabaseUrl) backends.push({ name: "postgres (neon)", setup: () => neonTestDb(testDatabaseUrl) });
+
+describe.each(backends)("$name backend", (backend) => {
+  let backendRepo: Repository;
+  beforeAll(async () => {
+    backendRepo = await backend.setup();
+    setRepository(backendRepo);
+  });
+
+  describe("project → milestone → task", () => {
+    it("creates the hierarchy with codes and loads it back", async () => {
+      const project = await repo.createProject({ title: "Website relaunch", code: "web", priority: "P1", description: "## Goal\nShip v2." });
+      expect(project).toMatchObject({ code: "WEB", last_milestone_number: 0 });
+      expect(project.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+
+      const milestone = await repo.createMilestone({ title: "Login", project: "WEB" });
+      expect(milestone).toMatchObject({ code: "WEB-M1", number: 1, project: project.id, priority: undefined });
+
+      const [task] = await repo.createTasks([{ title: "POST /login", milestone: "WEB-M1", estimate: 2 }]);
+      expect(task).toMatchObject({ code: "WEB-M1-T1", number: 1, milestone: milestone.id });
+
+      if (backend.dir) {
+        const text = await readFile(path.join(backend.dir, `projects/${project.id}.md`), "utf8");
+        expect(text).toContain(`id: ${project.id}\ncode: WEB\ntitle: Website relaunch\nstatus: active\npriority: P1`);
+        expect(text).toContain("## Goal\nShip v2.");
+      }
+
+      const ws = await repo.loadWorkspace();
+      expect(ws.projects.map((p) => [p.code, p.last_milestone_number])).toEqual([["WEB", 1]]);
+      expect(ws.projects[0].body).toBe("## Goal\nShip v2.");
+      expect(ws.milestones.map((m) => [m.code, m.project, m.last_task_number])).toEqual([["WEB-M1", project.id, 1]]);
+      expect(ws.tasks).toEqual([task]);
+      expect(ws.problems).toEqual([]);
+    });
+
+    it("finds records by code (any case) or id", async () => {
+      const project = await repo.getProject("web");
+      expect(await repo.getProject(project.id)).toEqual(project);
+      const milestone = await repo.getMilestone("Web-m1");
+      expect(await repo.getMilestone(milestone.id.toUpperCase())).toEqual(milestone);
+      const task = await repo.getTask(" web-m1-t1 ");
+      expect(await repo.getTask(task.id)).toEqual(task);
+    });
+
+    it("explains unknown, malformed and old-style references", async () => {
+      await expect(repo.getTask("WEB-M1-T9")).rejects.toThrow("Task WEB-M1-T9 not found");
+      await expect(repo.getTask("WEB-M1")).rejects.toThrow('"WEB-M1" is not a task code');
+      await expect(repo.getTask("T-1")).rejects.toThrow("T-1 is an id from before milestones; use a task code like PMA-M1-T3");
+      await expect(repo.getMilestone("f-1")).rejects.toThrow("F-1 is an id from before milestones");
+      await expect(repo.getProject("PRJ-1")).rejects.toBeInstanceOf(repo.NotFoundError);
+      await expect(repo.getTask("../projects/x")).rejects.toBeInstanceOf(repo.NotFoundError);
+      await expect(repo.createMilestone({ title: "Orphan", project: "NOPE" })).rejects.toThrow("Project NOPE not found");
+    });
+
+    it("validates project codes", async () => {
+      await expect(repo.createProject({ title: "Dup", code: "Web" })).rejects.toThrow('Project code WEB is already used by "Website relaunch"');
+      for (const code of ["W", "TOOLONG", "1AB", "A-B", ""]) {
+        await expect(repo.createProject({ title: "Bad", code })).rejects.toThrow("Project code must be");
+      }
+      expect((await repo.loadWorkspace()).projects).toHaveLength(1);
+    });
+
+    it("puts a project on hold", async () => {
+      const project = await repo.updateProject("WEB", { status: "on_hold", deadline: "2026-12-01" });
+      expect(project).toMatchObject({ status: "on_hold", deadline: "2026-12-01" });
+      expect((await repo.getProject("web")).status).toBe("on_hold");
+      await repo.updateProject("WEB", { status: "active", deadline: null });
+    });
+  });
+
+  describe("tasks", () => {
+    it("resolves backward and forward refs within a batch", async () => {
+      const t1 = await repo.getTask("WEB-M1-T1");
+      const created = await repo.createTasks([
+        { ref: "api", title: "API", milestone: "WEB-M1", depends_on: ["ui", "web-m1-t1"], pert: { optimistic: 1, likely: 2, pessimistic: 6 } },
+        { ref: "ui", title: "UI", milestone: "web-m1", tags: ["frontend"], deadline: "2026-11-01" },
+        { title: "Docs", milestone: "WEB-M1", depends_on: ["api"] },
+      ]);
+      expect(created.map((t) => t.code)).toEqual(["WEB-M1-T2", "WEB-M1-T3", "WEB-M1-T4"]);
+      // Ids, in the order given.
+      expect(created[0].depends_on).toEqual([created[1].id, t1.id]);
+      expect(created[2].depends_on).toEqual([created[0].id]);
+      expect(created[0]).toMatchObject({ estimate: 2.5, estimate_range: [1, 6] });
+      expect(await repo.getTask("WEB-M1-T2")).toEqual(created[0]);
+      expect(await repo.getTask(created[1].id)).toEqual(created[1]);
+    });
+
+    it("rejects a batch with a bad dependency, milestone or cycle, and writes nothing (not even numbers)", async () => {
+      const before = await repo.loadWorkspace();
+      await expect(
+        repo.createTasks([{ title: "ok", milestone: "WEB-M1" }, { title: "bad", milestone: "WEB-M1", depends_on: ["WEB-M1-T99"] }]),
+      ).rejects.toThrow("WEB-M1-T99");
+      await expect(repo.createTasks([{ title: "lost", milestone: "WEB-M9" }])).rejects.toThrow('Milestone WEB-M9 not found (task "lost")');
+      await expect(
+        repo.createTasks([
+          { ref: "a", title: "a", milestone: "WEB-M1", depends_on: ["b"] },
+          { ref: "b", title: "b", milestone: "WEB-M1", depends_on: ["a"] },
+        ]),
+      ).rejects.toThrow("Dependency cycle: a would depend on itself");
+      const after = await repo.loadWorkspace();
+      expect(after.tasks.length).toBe(before.tasks.length);
+      expect(after.milestones[0].last_task_number).toBe(before.milestones[0].last_task_number);
+    });
+
+    it("updates fields, completes and reopens a task", async () => {
+      const updated = await repo.updateTask("WEB-M1-T3", { estimate: 4, priority: "P0", not_before: "2026-10-01", append_note: "hi" });
+      expect(updated).toMatchObject({ estimate: 4, estimate_range: undefined, priority: "P0", not_before: "2026-10-01" });
+      expect(updated.body).toMatch(/### Note · \d{4}-\d{2}-\d{2}\n\nhi$/);
+      const done = await repo.updateTask("WEB-M1-T3", { status: "done" });
+      expect(done.completed).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      const reopened = await repo.updateTask("WEB-M1-T3", { status: "todo", priority: null, not_before: null });
+      expect(reopened).toMatchObject({ completed: undefined, priority: undefined, not_before: undefined });
+      expect(await repo.getTask("WEB-M1-T3")).toEqual(reopened);
+      await expect(repo.updateTask("WEB-M1-T1", { depends_on: ["WEB-M1-T2"] })).rejects.toThrow(
+        "Dependency cycle: WEB-M1-T1 would depend on itself",
+      );
+      await expect(repo.updateTask("WEB-M1-T1", { depends_on: ["WEB-M1-T99"] })).rejects.toThrow("Task WEB-M1-T99 not found");
+    });
+
+    it("logs time into the ## Log section", async () => {
+      const first = await repo.logTime("WEB-M1-T1", 1.5, "skeleton");
+      expect(first).toMatchObject({ spent: 1.5, status: "in_progress" });
+      const second = await repo.logTime("web-m1-t1", 0.25, undefined, true);
+      expect(second).toMatchObject({ spent: 1.75, status: "done" });
+      expect(second.body).toMatch(/## Log\n\n- \d{4}-\d{2}-\d{2}: 1.5h — skeleton\n- \d{4}-\d{2}-\d{2}: 0.25h$/);
+      expect(await repo.getTask("WEB-M1-T1")).toEqual(second);
+    });
+
+    it("reorders tasks", async () => {
+      const reordered = await repo.reorderTasks(["WEB-M1-T4", "WEB-M1-T2"]);
+      expect(reordered.map((t) => [t.code, t.order])).toEqual([["WEB-M1-T4", 0], ["WEB-M1-T2", 1]]);
+      expect((await repo.getTask("WEB-M1-T2")).order).toBe(1);
+      await expect(repo.reorderTasks(["WEB-M1-T2", "WEB-M1-T99"])).rejects.toThrow("Task WEB-M1-T99 not found");
+      expect((await repo.getTask("WEB-M1-T2")).order).toBe(1);
+    });
+
+    it("saves settings without resetting unmentioned fields", async () => {
+      await repo.updateSettings({ timezone: "Asia/Ho_Chi_Minh", buffer: 1.2 });
+      const settings = await repo.updateSettings({ days_off: ["2026-12-25"] });
+      expect(settings).toMatchObject({ timezone: "Asia/Ho_Chi_Minh", buffer: 1.2, days_off: ["2026-12-25"] });
+      expect(await repo.getSettings()).toEqual(settings);
+    });
+  });
+
+  describe("codes follow moves and renames", () => {
+    it("moves a task to another milestone: new number and code, same id and dependencies", async () => {
+      await repo.createMilestone({ title: "Signup", project: "web" });
+      const docs = await repo.getTask("WEB-M1-T4");
+      const moved = await repo.updateTask("WEB-M1-T4", { milestone: "WEB-M2" });
+      expect(moved).toMatchObject({ id: docs.id, code: "WEB-M2-T1", number: 1, depends_on: docs.depends_on });
+      expect(await repo.getTask(docs.id)).toEqual(moved);
+      await expect(repo.getTask("WEB-M1-T4")).rejects.toThrow("Task WEB-M1-T4 not found");
+      // Its old number isn't handed out again.
+      const [next] = await repo.createTasks([{ title: "after the move", milestone: "WEB-M1" }]);
+      expect(next.code).toBe("WEB-M1-T5");
+      // Moving to its own milestone changes nothing.
+      expect(await repo.updateTask("WEB-M2-T1", { milestone: "web-m2" })).toEqual(moved);
+    });
+
+    it("numbers each milestone's tasks separately within one batch", async () => {
+      const created = await repo.createTasks([
+        { title: "a", milestone: "WEB-M2" },
+        { title: "b", milestone: "WEB-M1" },
+        { title: "c", milestone: "WEB-M2" },
+      ]);
+      expect(created.map((t) => t.code)).toEqual(["WEB-M2-T2", "WEB-M1-T6", "WEB-M2-T3"]);
+    });
+
+    it("moves a milestone to another project: renumbered, its tasks recoded", async () => {
+      const other = await repo.createProject({ title: "Operations", code: "OTH" });
+      await repo.createMilestone({ title: "Existing", project: "OTH" });
+      const signup = await repo.getMilestone("WEB-M2");
+      const moved = await repo.updateMilestone("WEB-M2", { project: "oth", title: "Sign-up" });
+      expect(moved).toMatchObject({ id: signup.id, code: "OTH-M2", number: 2, project: other.id, title: "Sign-up" });
+
+      const ws = await repo.loadWorkspace();
+      const tasks = ws.tasks.filter((t) => t.milestone === signup.id);
+      expect(tasks.map((t) => t.code)).toEqual(["OTH-M2-T1", "OTH-M2-T2", "OTH-M2-T3"]);
+      expect(tasks[0].depends_on).toEqual([(await repo.getTask("WEB-M1-T2")).id]);
+      expect(ws.problems).toEqual([]);
+      expect((await repo.createMilestone({ title: "Next", project: "WEB" })).code).toBe("WEB-M3");
+    });
+
+    it("renames every code in a project when its code changes", async () => {
+      const renamed = await repo.updateProject("OTH", { code: "ops" });
+      expect(renamed).toMatchObject({ code: "OPS", last_milestone_number: 2 });
+      const ws = await repo.loadWorkspace();
+      expect(ws.milestones.filter((m) => m.project === renamed.id).map((m) => m.code)).toEqual(["OPS-M1", "OPS-M2"]);
+      expect(ws.tasks.filter((t) => t.code.startsWith("OPS-")).map((t) => t.code)).toEqual(["OPS-M2-T1", "OPS-M2-T2", "OPS-M2-T3"]);
+      expect(ws.tasks.filter((t) => t.code.startsWith("OTH-"))).toEqual([]);
+      expect(ws.problems).toEqual([]);
+      await expect(repo.getProject("OTH")).rejects.toThrow("Project OTH not found");
+      await expect(repo.updateProject("OPS", { code: "WEB" })).rejects.toThrow("Project code WEB is already used");
+      expect((await repo.getProject("OPS")).last_milestone_number).toBe(2);
+    });
+
+    it("updates mentions of changed codes in markdown, leaving priorities and other text alone", async () => {
+      const notes = await repo.createMilestone({
+        title: "Notes",
+        project: "WEB",
+        description: "Follows WEB-M1-T2 and OPS-M2-T1 (see OPS-M2). Priority P1, not OPS-M20.",
+      });
+      await repo.updateProject("OPS", { code: "OPX" });
+      expect((await repo.getMilestone(notes.id)).body).toBe("Follows WEB-M1-T2 and OPX-M2-T1 (see OPX-M2). Priority P1, not OPS-M20.");
+
+      const moved = await repo.updateTask("OPX-M2-T1", { milestone: "WEB-M1", description: "Moved; I am OPX-M2-T1." });
+      expect(moved.body).toBe(`Moved; I am ${moved.code}.`);
+      expect((await repo.getMilestone(notes.id)).body).toContain(`Follows WEB-M1-T2 and ${moved.code} (see OPX-M2)`);
+
+      const back = await repo.updateMilestone("OPX-M2", { project: "WEB" });
+      expect((await repo.getMilestone(notes.id)).body).toContain(`(see ${back.code})`);
+      expect((await repo.loadWorkspace()).problems).toEqual([]);
+    });
+
+    it("keeps counters when a stale copy is saved", async () => {
+      const stale = await repo.getMilestone("WEB-M1");
+      await repo.createTasks([{ title: "bumps the counter", milestone: "WEB-M1" }]);
+      await backendRepo.save({ milestones: [{ ...stale, title: "Log in" }] });
+      expect(await repo.getMilestone("WEB-M1")).toMatchObject({ title: "Log in", last_task_number: stale.last_task_number + 1 });
+    });
+
+    it("reports stored codes that don't match their parents", async () => {
+      const task = await repo.getTask("WEB-M1-T1");
+      await backendRepo.save({ tasks: [{ ...task, code: "WEB-M1-T99" }] });
+      expect((await repo.loadWorkspace()).problems).toEqual(["task WEB-M1-T99: code should be WEB-M1-T1"]);
+      await backendRepo.save({ tasks: [task] });
+      expect((await repo.loadWorkspace()).problems).toEqual([]);
+    });
+  });
+
+  describe("users", () => {
+    const hash = "scrypt$16384$8$1$c2FsdA$aGFzaA";
+
+    it("creates a user and finds it by email, case-insensitively", async () => {
+      expect(await repo.countUsers()).toBe(0);
+      const user = await repo.createUser({ email: "  Me@Example.COM ", password_hash: hash });
+      const today = todayIn((await repo.getSettings()).timezone);
+      expect(user).toEqual({ id: "U-1", email: "me@example.com", password_hash: hash, created: today });
+      expect(await repo.findUserByEmail("ME@example.com")).toEqual(user);
+      expect(await repo.findUserByEmail(" me@example.com")).toEqual(user);
+      expect(await repo.findUserByEmail("other@example.com")).toBeNull();
+      expect(await repo.getUser("U-1")).toEqual(user);
+      expect(await repo.getUser("u-1")).toEqual(user);
+      expect(await repo.getUser("U-9")).toBeNull();
+      expect(await repo.countUsers()).toBe(1);
+      if (backend.dir) {
+        const text = await readFile(path.join(backend.dir, "users/U-1.md"), "utf8");
+        expect(text).toBe(`---\nid: U-1\nemail: me@example.com\npassword_hash: ${hash}\ncreated: ${today}\n---\n`);
+      }
+    });
+
+    it("returns null for a duplicate email and keeps the original", async () => {
+      expect(await repo.createUser({ email: "ME@EXAMPLE.com", password_hash: "other" })).toBeNull();
+      expect(await repo.countUsers()).toBe(1);
+      expect((await repo.findUserByEmail("me@example.com"))?.password_hash).toBe(hash);
+    });
+
+    it("throws on an invalid email and writes nothing", async () => {
+      for (const email of ["", "   ", "me", "me@example", "@example.com", "me@.com", "me @example.com", "me@exa mple.com", "a@b@c.com"]) {
+        await expect(repo.createUser({ email, password_hash: hash })).rejects.toThrow("Invalid email address");
+      }
+      await expect(repo.createUser({ email: `${"a".repeat(250)}@b.co`, password_hash: hash })).rejects.toThrow("Invalid email address");
+      expect(await repo.countUsers()).toBe(1);
+    });
+
+    it("increments ids", async () => {
+      const two = await repo.createUser({ email: "two@example.com", password_hash: hash });
+      const three = await repo.createUser({ email: "three@example.com", password_hash: hash });
+      expect([two?.id, three?.id]).toEqual(["U-2", "U-3"]);
+      expect(await repo.countUsers()).toBe(3);
+      expect(await repo.getUser("3")).toEqual(three);
+    });
+
+    it("rejects a duplicate at the backend too", async () => {
+      const draft = { email: "two@example.com", password_hash: "x", created: "2026-09-27" };
+      expect(await backendRepo.insertUser(draft)).toBeNull();
+      expect(await backendRepo.countUsers()).toBe(3);
+    });
+
+    it("keeps users out of the workspace", async () => {
+      const records = await backendRepo.loadAll();
+      expect(Object.keys(records).sort()).toEqual(["milestones", "problems", "projects", "tasks"]);
+      expect(records.problems).toEqual([]);
+      const ws = await repo.loadWorkspace();
+      const ids = [...ws.tasks, ...ws.milestones, ...ws.projects].map((r) => r.id);
+      expect(ids.filter((id) => id.startsWith("U-"))).toEqual([]);
+      expect(JSON.stringify(await readAll(backendRepo))).not.toContain("example.com");
+    });
+  });
+
+  describe("api keys", () => {
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+    const [h1, h2, h3] = [sha("one"), sha("two"), sha("three")];
+
+    it("creates keys by hash and finds them by hash", async () => {
+      expect(await repo.listApiKeys()).toEqual([]);
+      const key = await repo.createApiKey({ label: "  laptop ", hash: h1 });
+      const today = todayIn((await repo.getSettings()).timezone);
+      expect(key).toEqual({ id: "K-1", label: "laptop", hash: h1, created: today });
+      expect(await repo.findApiKeyByHash(h1)).toEqual(key);
+      expect(await repo.findApiKeyByHash(h2)).toBeNull();
+      expect(await repo.findApiKeyByHash("not-a-hash")).toBeNull();
+      expect(await repo.getApiKey("k-1")).toEqual(key);
+      expect(await repo.getApiKey("K-9")).toBeNull();
+      expect(await repo.getApiKey("../users/U-1")).toBeNull();
+      if (backend.dir) {
+        const text = await readFile(path.join(backend.dir, "api_keys/K-1.md"), "utf8");
+        expect(text).toBe(`---\nid: K-1\nlabel: laptop\nhash: ${h1}\ncreated: ${today}\n---\n`);
+      }
+    });
+
+    it("rejects anything but a lowercase hex SHA-256 and writes nothing", async () => {
+      for (const hash of ["", "abc", h2.toUpperCase(), `${h2}0`, h2.replace(/./, "g")]) {
+        await expect(repo.createApiKey({ label: "x", hash })).rejects.toThrow("SHA-256");
+      }
+      expect((await repo.listApiKeys()).map((k) => k.id)).toEqual(["K-1"]);
+    });
+
+    it("lists keys by id number, with empty labels", async () => {
+      const two = await repo.createApiKey({ label: "", hash: h2 });
+      const three = await repo.createApiKey({ hash: h3 });
+      expect([two.id, three.id, two.label, three.label]).toEqual(["K-2", "K-3", "", ""]);
+      expect((await repo.listApiKeys()).map((k) => k.id)).toEqual(["K-1", "K-2", "K-3"]);
+      expect(await repo.findApiKeyByHash(h3)).toEqual(three);
+    });
+
+    it("touches last_used_at", async () => {
+      const at = new Date("2026-09-27T02:03:04.567Z");
+      const touched = await repo.touchApiKey("K-2", at);
+      expect(touched).toMatchObject({ id: "K-2", last_used_at: "2026-09-27T02:03:04.567Z" });
+      expect(touched?.revoked_at).toBeUndefined();
+      expect(await repo.findApiKeyByHash(h2)).toEqual(touched);
+      expect(await repo.touchApiKey("K-99")).toBeNull();
+    });
+
+    it("revokes idempotently and keeps revoked keys listed", async () => {
+      const at = new Date("2026-09-27T03:00:00.000Z");
+      const revoked = await repo.revokeApiKey("2", at);
+      expect(revoked).toMatchObject({ id: "K-2", last_used_at: "2026-09-27T02:03:04.567Z", revoked_at: at.toISOString() });
+      expect(await repo.revokeApiKey("K-2", new Date("2026-10-01T00:00:00.000Z"))).toEqual(revoked);
+      expect(await repo.getApiKey("K-2")).toEqual(revoked);
+      expect(await repo.findApiKeyByHash(h2)).toEqual(revoked);
+      expect(await repo.revokeApiKey("K-99")).toBeNull();
+      expect(await repo.revokeApiKey("nope")).toBeNull();
+      const list = await repo.listApiKeys();
+      expect(list.map((k) => [k.id, Boolean(k.revoked_at)])).toEqual([["K-1", false], ["K-2", true], ["K-3", false]]);
+    });
+
+    it("touches only last_used_at, so a touch after a revoke keeps revoked_at", async () => {
+      const revoked = (await repo.getApiKey("K-2"))!;
+      expect(revoked.revoked_at).toBe("2026-09-27T03:00:00.000Z");
+      const at = new Date("2026-09-27T04:05:06.789Z");
+      const touched = await repo.touchApiKey("K-2", at);
+      expect(touched).toEqual({ ...revoked, last_used_at: at.toISOString() });
+      expect(await repo.getApiKey("K-2")).toEqual(touched);
+      expect(await repo.findApiKeyByHash(h2)).toEqual(touched);
+      // Straight to the repository too, and junk ids never reach it.
+      expect(await backendRepo.touchApiKey("K-99", at.toISOString())).toBeNull();
+      expect(await repo.touchApiKey("../users/U-1", at)).toBeNull();
+    });
+
+    it("stores the owning user and lists an account's keys", async () => {
+      const [u1, u2] = [(await repo.findUserByEmail("me@example.com"))!, (await repo.findUserByEmail("two@example.com"))!];
+      const mine = await repo.createApiKey({ label: "web", hash: sha("mine"), user_id: u1.id });
+      const theirs = await repo.createApiKey({ hash: sha("theirs"), user_id: u2.id.toLowerCase() });
+      expect(mine.user_id).toBe(u1.id);
+      expect(theirs.user_id).toBe(u2.id);
+      expect(await repo.findApiKeyByHash(sha("mine"))).toEqual(mine);
+      expect((await repo.listUserApiKeys(u1.id)).map((k) => k.id)).toEqual([mine.id]);
+      expect((await repo.listUserApiKeys(u2.id)).map((k) => k.id)).toEqual([theirs.id]);
+      // CLI keys (no owner) belong to no account.
+      expect((await repo.getApiKey("K-1"))?.user_id).toBeUndefined();
+      // Revoking and touching keep the owner.
+      const revoked = await repo.revokeApiKey(mine.id, new Date("2026-09-27T05:00:00.000Z"));
+      expect(revoked?.user_id).toBe(u1.id);
+      expect((await repo.touchApiKey(mine.id))?.user_id).toBe(u1.id);
+    });
+
+    it("keeps API keys out of the workspace", async () => {
+      const records = await backendRepo.loadAll();
+      expect(Object.keys(records).sort()).toEqual(["milestones", "problems", "projects", "tasks"]);
+      expect(records.problems).toEqual([]);
+      const dump = JSON.stringify(await readAll(backendRepo));
+      for (const hash of [h1, h2, h3]) expect(dump).not.toContain(hash);
+      expect(dump).not.toContain('"K-');
+    });
+  });
+});
+
+describe("email helpers", () => {
+  it("normalizes and validates", () => {
+    expect(repo.normalizeEmail("  Me@Example.COM\n")).toBe("me@example.com");
+    expect(repo.isValidEmail("a@b.co")).toBe(true);
+    expect(repo.isValidEmail("first.last+tag@sub.example.com")).toBe(true);
+    expect(repo.isValidEmail(" a@b.co")).toBe(false);
+    expect(repo.isValidEmail("a@b")).toBe(false);
+    expect(repo.isValidEmail(`${"a".repeat(249)}@b.com`)).toBe(false);
+    expect(repo.isValidEmail(`${"a".repeat(248)}@b.com`)).toBe(true);
+  });
+});
+
+describe("postgres specifics", () => {
+  const task = (milestone: string, number: number, code = `PP-M1-T${number}`): Task => ({
+    id: newId(),
+    code,
+    number,
+    title: code,
+    status: "todo",
+    milestone,
+    spent: 0,
+    depends_on: [],
+    tags: [],
+    created: "2026-09-27",
+    body: "",
+  });
+
+  it("rolls back a whole task batch when the database rejects one row", async () => {
+    const pg = await pglite();
+    setRepository(pg);
+    await repo.createProject({ title: "P", code: "PP" });
+    const milestone = await repo.createMilestone({ title: "M", project: "PP" });
+    await expect(pg.insert({ tasks: [task(milestone.id, 1), task(newId(), 2)] })).rejects.toThrow();
+    expect((await pg.loadAll()).tasks).toEqual([]);
+  });
+
+  it("enforces unique codes and unique numbers per milestone", async () => {
+    const pg = await pglite();
+    setRepository(pg);
+    await repo.createProject({ title: "P", code: "PP" });
+    const milestone = await repo.createMilestone({ title: "M", project: "PP" });
+    await pg.insert({ tasks: [task(milestone.id, 1)] });
+    await expect(pg.insert({ tasks: [task(milestone.id, 1, "PP-M1-T7")] })).rejects.toThrow();
+    await expect(pg.insert({ tasks: [task(milestone.id, 2, "PP-M1-T1")] })).rejects.toThrow();
+    await expect(pg.insert({ tasks: [task(milestone.id, 3, "pp-m1-t3")] })).rejects.toThrow();
+    expect((await pg.loadAll()).tasks.map((t) => t.code)).toEqual(["PP-M1-T1"]);
+  });
+});
+
+describe("import / export", () => {
+  let source: FileRepository;
+
+  beforeAll(async () => {
+    const dir = await tempDir();
+    source = new FileRepository(new FsStore(dir));
+    setRepository(source);
+    await repo.updateSettings({ timezone: "Asia/Ho_Chi_Minh" });
+    await repo.createProject({ title: "P", code: "PX", deadline: "2026-12-01", description: "Goal" });
+    await repo.createMilestone({ title: "F", project: "PX", priority: "P1" });
+    await repo.createTasks([
+      { ref: "a", title: "A", milestone: "PX-M1", pert: { optimistic: 1, likely: 2, pessimistic: 4 }, tags: ["x"], depends_on: ["b"] },
+      { ref: "b", title: "B", milestone: "PX-M1", estimate: 3, not_before: "2026-10-01" },
+      { title: "C", milestone: "PX-M1", estimate: 1, status: "blocked" },
+    ]);
+    await repo.logTime("PX-M1-T2", 1, "started");
+    await repo.reorderTasks(["PX-M1-T3", "PX-M1-T1"]);
+    // Leave a gap in the numbers: T-5 moves to another milestone, T-4 and T-6 stay.
+    await repo.createMilestone({ title: "G", project: "PX" });
+    await repo.createTasks(["D", "E", "F"].map((title) => ({ title, milestone: "PX-M1" })));
+    await repo.updateTask("PX-M1-T5", { milestone: "PX-M2" });
+    // Users are never transferred.
+    await repo.createUser({ email: "me@example.com", password_hash: "hash" });
+    // Nor are API keys.
+    await repo.createApiKey({ label: "agent", hash: "a".repeat(64) });
+  });
+
+  it("imports markdown into Postgres with identical workspace and schedule, and continues numbering", async () => {
+    const pg = await pglite();
+    await importInto(pg, source);
+    expect(await compareBackends(source, pg)).toEqual([]);
+    expect(await pg.countUsers()).toBe(0);
+    expect(await pg.listApiKeys()).toEqual([]);
+
+    await expect(importInto(pg, source)).rejects.toThrow("not empty");
+    const user = await pg.insertUser({ email: "pg@example.com", password_hash: "hash", created: "2026-09-27" });
+    const key = await pg.insertApiKey({ label: "pg", hash: "b".repeat(64), created: "2026-09-27" });
+    await importInto(pg, source, { replace: true });
+    expect(await compareBackends(source, pg)).toEqual([]);
+    expect(await pg.getUser("U-1")).toEqual(user);
+    expect(await pg.listApiKeys()).toEqual([key]);
+    expect(await pg.countUsers()).toBe(1);
+
+    setRepository(pg);
+    const [next] = await repo.createTasks([{ title: "after import", milestone: "px-m1" }]);
+    expect(next.code).toBe("PX-M1-T7");
+    expect((await repo.createMilestone({ title: "F2", project: "PX" })).code).toBe("PX-M3");
+    expect((await repo.createProject({ title: "P2", code: "PY" })).code).toBe("PY");
+  });
+
+  it("round-trips: markdown → Postgres → markdown", async () => {
+    const pg = await pglite();
+    await importInto(pg, source);
+    const exported = new FileRepository(new FsStore(await tempDir()));
+    await exportTo(exported, pg);
+    expect(await compareBackends(source, exported)).toEqual([]);
+    expect(await exported.countUsers()).toBe(0);
+    expect(await exported.listApiKeys()).toEqual([]);
+  });
+});

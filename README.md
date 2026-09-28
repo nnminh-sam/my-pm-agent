@@ -1,0 +1,272 @@
+# my_pm
+
+A personal project manager built to be driven by AI agents.
+
+- **Projects → milestones → tasks**, each with a readable code (`PMA`, `PMA-M1`, `PMA-M1-T3`), stored in Neon Postgres, or as Markdown files with YAML frontmatter that you can read, diff and edit by hand.
+- **A scheduler lays tasks onto your working hours**, following priority, dependencies and deadlines. It re-plans every time an estimate, priority or piece of logged time changes.
+- **An MCP server** at `/api/mcp` lets Claude Code or any other MCP client break milestones down, estimate, rearrange and log time. The same tools are exposed to in-browser agents through WebMCP.
+- **A small web UI** with Schedule, Projects, Backlog, Milestone and Task pages.
+
+## Run it locally
+
+```bash
+npm install
+npm run dev
+```
+
+Open http://localhost:3000. Without `JWT_SECRET` auth is off locally: no login, and `/api/mcp` is open. See [Auth](#auth) to turn it on.
+
+### Storage
+
+| Backend | Picked when | Notes |
+| --- | --- | --- |
+| Neon Postgres | `PM_STORAGE=postgres`, or `DATABASE_URL` is set and `PM_STORAGE` isn't `fs` | Relational rows (`migrations/`); markdown bodies are `text` columns |
+| Markdown files | default locally (`./data`, or `PM_DATA_DIR`) | `PM_STORAGE=fs` forces it |
+
+`get_overview` reports the active backend as `storage`; the Connect page shows it too.
+
+### Neon
+
+Point local dev at your own Neon branch, never `production`:
+
+```bash
+neon branches create --name development --parent production
+neon connection-string development --pooled          # -> DATABASE_URL (app queries)
+neon connection-string development                    # -> DATABASE_URL_UNPOOLED (migrations, scripts)
+```
+
+Put both plus `NEON_BRANCH` in `.env.local` (see `.env.example`), then:
+
+```bash
+npm run db:smoke                          # select 1 over both URLs
+npm run db:migrate                        # apply migrations/*.sql (no-op when up to date)
+npm run db:import -- --dry-run            # what would be copied from ./data
+npm run db:import                         # ./data → Postgres, then verifies workspace + schedule are identical
+npm run db:import -- --replace            # overwrite a non-empty database
+npm run db:export -- --to backups/2026-10-01   # Postgres → markdown in the data/ layout (backup / rollback)
+```
+
+All scripts use `DATABASE_URL_UNPOOLED`. The import runs in one transaction and carries each parent's numbering counter, so new milestones and tasks continue from the imported numbers. For a periodic backup, schedule `npm run db:export -- --to backups/$(date +%F)` (cron, or a CI job with the secret set); Neon's point-in-time restore covers the rest.
+
+`npm test` runs the repository suite against the file backend and an in-process Postgres (PGlite). To also run it against real Neon, point `TEST_DATABASE_URL` at a disposable branch — **the suite truncates it**:
+
+```bash
+neon branches create --name test --parent development --expires-at <tomorrow>
+TEST_DATABASE_URL="$(neon connection-string test)" npm test
+```
+
+Claude Code started in this folder picks up the server from `.mcp.json`. From anywhere else, add it once:
+
+```bash
+claude mcp add --transport http --scope user my-pm http://localhost:3000/api/mcp
+```
+
+Then just talk to it:
+
+> Create a project "Website relaunch" with code WEB (due Nov 15) and plan its milestones.
+> Break down WEB-M2.
+> I spent 2h on WEB-M1-T3 and it's done. What's next today?
+> WEB-M1-T2 is bigger than I thought, more like 10h. Replan.
+
+Prompts are also available as slash commands: `/mcp__my-pm__breakdown_project WEB`, `/mcp__my-pm__breakdown_milestone WEB-M1`, `/mcp__my-pm__estimate_tasks`, `/mcp__my-pm__replan`, `/mcp__my-pm__daily_checkin`.
+
+## Data format
+
+A **project** has many **milestones**, and each milestone is broken down into many **tasks**. A task belongs to a project through its milestone.
+
+Every record has two identifiers:
+
+- **`code`**, for people and agents. A project's code is chosen when it's created (2–6 letters or digits, e.g. `WEB`). Milestones are numbered within their project (`WEB-M1`) and tasks within their milestone (`WEB-M1-T3`). Codes are matched case-insensitively.
+- **`id`**, a UUID v7 and the primary key. It never changes, so references between records (`project`, `milestone`, `depends_on`) hold ids.
+
+A code changes when the project's code changes (every code in the project follows) or when an item moves to another parent (it takes the next number there). Numbers are never reused: each parent keeps a counter (`last_milestone_number`, `last_task_number`), so an old code can stop resolving but never points at something else. Tools and pages accept either the code or the id.
+
+```
+data/
+  settings.yaml          # timezone, working hours, days off, estimate buffer
+  projects/<id>.md       # code WEB; goal and context in the body
+  milestones/<id>.md     # code WEB-M1, `project: <project id>`; spec in the body
+  tasks/<id>.md          # code WEB-M1-T3, `milestone: <milestone id>`
+```
+
+Files are named by id, so they never need renaming; the code is the second line of the frontmatter.
+
+Priority and deadline flow downwards. A task without its own priority uses its milestone's, then its project's. The earliest deadline among task, milestone and project applies. A project that is `on_hold`, `done` or `cancelled` keeps all of its tasks off the schedule.
+
+```markdown
+---
+id: 0199c4a2-7f3e-7a10-9c1d-2b5e8f0a4d61
+code: WEB
+title: Website relaunch
+status: active             # planned | active | on_hold | done | cancelled
+priority: P1
+deadline: 2026-11-15
+created: 2026-09-27
+last_milestone_number: 2   # managed by the app: the highest milestone number handed out
+---
+
+## Goal
+…
+```
+
+```markdown
+---
+id: 0199c4a3-1b20-7c44-8e2f-6d0a9b3c5e17
+code: WEB-M1-T3            # managed by the app, from the milestone's code and `number`
+number: 3
+title: Login form with validation
+status: in_progress        # todo | in_progress | blocked | done | cancelled
+priority: P1               # P0–P3; omit to inherit from milestone → project
+milestone: 0199c4a2-9d51-7b02-a6e3-4f1c7d2e8b90
+estimate: 3.25             # hours (PERT mean when a range is given)
+estimate_range: [2, 5]     # optimistic, pessimistic
+spent: 1.5
+deadline: 2026-10-06
+not_before: 2026-09-30     # optional: don't schedule earlier
+depends_on: [0199c4a3-0a7f-7d19-b2c8-3e6f1a9d4c02]   # task ids
+tags: [frontend]
+order: 0                   # optional manual rank within a priority
+created: 2026-09-27
+---
+
+Context and acceptance criteria…
+
+## Log
+
+- 2026-09-27: 1.5h — form skeleton
+```
+
+## How scheduling works
+
+`src/lib/scheduler.ts` is a pure function with its own tests (`npm test`). It works like this:
+
+1. Open tasks with an estimate are placed one after another into your working intervals, starting now. Each block is at least `min_block_hours`, and tasks split across breaks and days.
+2. Each step picks the best *ready* task, meaning its dependencies are already placed and its `not_before` date has passed. The ranking is priority first (inherited from anything that depends on the task), then in-progress work, then the earliest deadline, then manual `order`, then code (`WEB-M1-T2` before `WEB-M1-T10`).
+3. **Deadline repair.** If a task would miss its deadline, the scheduler tries pulling it, and its prerequisites, ahead of the priority order. It keeps the change only if total priority-weighted lateness goes down.
+4. Remaining work is `estimate × buffer − spent`. Tasks that are blocked, unestimated or waiting on either are listed with the reason. Tasks larger than `max_task_hours`, or over their estimate, produce warnings.
+
+Estimation is calibrated from your own history. `get_estimation_stats` compares actual time with estimated time, overall and per tag, and suggests a `buffer` once 5 or more tasks are done.
+
+## MCP tools
+
+| Tool | What it does |
+| --- | --- |
+| `get_overview` | Today's plan, milestones with progress and projected finish, risks, settings |
+| `list_tasks` / `get_task` | Browse tasks with their scheduled slot |
+| `create_tasks` | Create many tasks in one call; `ref`s let tasks depend on each other in the same batch |
+| `update_task` | Status, priority, estimate or `pert`, deadline, dependencies, order, notes; `milestone` moves it |
+| `log_time` | Add hours worked; `done=true` completes the task |
+| `reorder_tasks` | Manual order within a priority |
+| `list_projects` / `get_project` / `create_project` / `update_project` | Projects: code, goal, rollup across milestones, on-hold |
+| `list_milestones` / `get_milestone` / `create_milestone` / `update_milestone` | Milestones (within a project) and their specs; `project` moves one |
+| `get_schedule` | Day-by-day plan (text or JSON) |
+| `get_estimation_stats` | Estimate accuracy, overall and per tag |
+| `update_settings` | Working hours, days off, buffer and so on |
+
+## Auth
+
+Accounts are email + password (scrypt-hashed). Sessions are stateless HS256 JWTs signed with `JWT_SECRET`.
+
+| `JWT_SECRET` | Mode |
+| --- | --- |
+| set, at least 32 characters | Accounts: pages need a session; `/api/*` takes a session or a Bearer token |
+| unset, locally | Open: no login (the default for `npm run dev`) |
+| unset on Vercel, or shorter than 32 characters | Locked: every request is refused, and `/login` says why |
+
+Generate it with `openssl rand -hex 32`. To try auth locally, put it in `.env.local`, create an API key (`npm run auth:create-key`) and set the Bearer value in `.mcp.json` to it.
+
+- **Sign-up.** The first account can always sign up at `/signup`, which bootstraps the workspace. After that, sign-up is closed except for the emails in `PM_SIGNUP_EMAILS` (comma-separated). There are no roles: every account sees everything. Passwords are 10–256 characters and can't be the email.
+- **Sessions.** The token sits in the httpOnly `pm_session` cookie and lasts 2 hours. While you're active, the proxy re-issues it once less than an hour is left, for up to 30 days after you logged in; then you log in again. Logout clears the cookie. Nothing is stored server-side, so a token stays valid until it expires, and rotating `JWT_SECRET` logs everyone out.
+- **Agents.** Send `Authorization: Bearer <API_KEY>` to `/api/mcp`; see [Agent authentication](#agent-authentication). `PM_SECRET`, if set, still works as a legacy shared bearer secret. A session token also works as a Bearer, for its 2 hours; a Bearer header takes precedence over the cookie.
+
+The JSON endpoints take `Content-Type: application/json`, return errors as `{ error, message }` and answer 503 `not_configured` unless `JWT_SECRET` is set:
+
+| Endpoint | Body | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /api/auth/signup` | `{ email, password, confirm? }` | 201 `{ token, expires_at, user }`, sets the cookie | 400 `invalid_input` / `invalid_email` / `invalid_password` / `password_mismatch`, 403 `signup_closed`, 409 `email_taken` |
+| `POST /api/auth/login` | `{ email, password }` | 200 `{ token, expires_at, user }`, sets the cookie | 400 `invalid_input`, 401 `invalid_credentials` (unknown email and wrong password alike) |
+| `POST /api/auth/logout` | – | 200 `{ ok: true }`, clears the cookie | – |
+
+```bash
+TOKEN=$(curl -s http://localhost:3000/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"…"}' | jq -r .token)
+# then: -H "Authorization: Bearer $TOKEN"
+```
+
+`src/lib/auth/flow.test.ts` drives these routes, the proxy and `/api/mcp` end to end on both storage backends.
+
+### Agent authentication
+
+With `JWT_SECRET` set, agents authenticate to `/api/mcp` with an API key (`pm_…`). Only its SHA-256 hash is stored: the key is shown once at creation and can't be recovered. Revocation takes effect on the next request.
+
+**Web UI (recommended).** Log in and open **Connect** → **API keys**: name a key, create it, and copy it (or the ready-made `claude mcp add` command) from the one-time reveal. The list shows your keys' labels, creation and last-use dates, and a **Revoke** button. Keys created there belong to your account (`user_id`), you only see and revoke your own, and only a logged-in session can create or revoke them (an API key or `PM_SECRET` can't mint keys). An account can hold 20 active keys.
+
+**CLI.** For scripts, or before anyone has signed up:
+
+```bash
+npm run auth:create-key -- --label laptop   # prints the key once; no owner ("cli")
+npm run auth:list-keys                      # every key: id (K-n), label, owner, created, last used, status; never the key
+npm run auth:revoke-key -- K-3              # any key, idempotent
+```
+
+The commands act on whichever store the env selects: Postgres via `DATABASE_URL` in `.env.local`, otherwise `./data`. A key only works against the database the deployment reads, so to issue one for production, run them with production's `DATABASE_URL` set in the shell (it overrides `.env.local`; `vercel env pull .env.production.local` fetches it without clobbering your dev env), plus `NEON_BRANCH=production` so the output names the right branch.
+
+Configure the client with the key as a header. Claude Code:
+
+```bash
+claude mcp add --transport http --scope user my-pm https://<your-app>.vercel.app/api/mcp \
+  --header "Authorization: Bearer $PM_API_KEY"
+```
+
+`.mcp.json` (or any client's `mcpServers` config):
+
+```json
+{ "mcpServers": { "my-pm": { "type": "http", "url": "https://<your-app>.vercel.app/api/mcp",
+  "headers": { "Authorization": "Bearer pm_…" } } } }
+```
+
+**Rotation.** Create a new key, update `headers.Authorization` in the client, reconnect, then revoke the old key.
+
+**Troubleshooting.** A missing, malformed, unknown or revoked key gets 401 `{"error":"unauthorized","message":…}` with `WWW-Authenticate: Bearer realm="pm"`. Claude Code reports this as an auth or 401 error ("needs authentication", "rejected the Authorization header"). Create a new key, update `headers.Authorization`, and reconnect (`/mcp` in Claude Code). If a fresh key is still refused, check that you created it in the same database the deployment uses.
+
+`PM_SECRET` still works as a transitional shared Bearer secret, but prefer keys: each client gets its own, and you can revoke one without touching the others.
+
+## Deploy to Vercel
+
+1. Push this repo and import it into Vercel.
+2. Storage: Vercel's filesystem is read-only, so production uses Neon.
+   1. Against the `production` branch (its URLs from `neon connection-string production [--pooled]`): `DATABASE_URL_UNPOOLED=… NEON_BRANCH=production npm run db:migrate` (re-run it before deploying any change that adds a migration), then (optionally) `npm run db:import` with the same env to seed it from `./data`.
+   2. Set `DATABASE_URL` (the **pooled** production URL) on the Vercel project.
+3. Before the first deploy, set `JWT_SECRET` (`openssl rand -hex 32`, at least 32 characters) on the Vercel project. Without it, or with a shorter one, the deployment is locked and refuses all requests. Also set `PM_SIGNUP_EMAILS` if others should be able to sign up. (`PM_SECRET` is optional, a legacy agent secret.)
+4. Deploy, then sign up at `/signup` right away: the first account bootstraps the workspace and closes sign-up, so don't leave it for someone else to claim.
+5. Create an API key at **Connect** → **API keys** (or with `DATABASE_URL=<pooled production URL> NEON_BRANCH=production npm run auth:create-key -- --label laptop`) and connect Claude Code with it:
+
+   ```bash
+   claude mcp add --transport http --scope user my-pm https://<your-app>.vercel.app/api/mcp \
+     --header "Authorization: Bearer $PM_API_KEY"
+   ```
+
+Settings come from the store (`settings` table, or `settings.yaml`); until they're saved, the defaults plus `PM_TIMEZONE` apply. Set them with the `update_settings` tool.
+
+**Rollback.** Take a backup first (`npm run db:export -- --to …`). Restore with Neon's point-in-time restore, or re-import an export into a fresh branch with `npm run db:import -- --replace` (`PM_DATA_DIR` pointing at the export).
+
+## Layout
+
+```
+src/lib/scheduler.ts     scheduling algorithm (pure, tested)
+src/lib/estimation.ts    PERT, rollups, calibration stats
+src/lib/repo.ts          projects/milestones/tasks/settings/users: validation, codes and domain rules
+src/lib/codes.ts         code formats, parsing, natural ordering, UUID v7 ids
+src/lib/repository/      storage backends behind repo.ts: Postgres and markdown files
+src/lib/store/           file store for the markdown backend (local fs)
+src/lib/db.ts            Neon clients (pooled for the app, unpooled for scripts)
+migrations/              SQL schema, applied by `npm run db:migrate`
+scripts/                 db:smoke, db:migrate, db:import, db:export, auth:*-key(s)
+src/lib/mcp/             MCP tools, prompts, server instructions
+src/app/api/mcp/         MCP endpoint (+ WebMCP bridge script)
+src/lib/auth/            auth modes, password hashing, JWTs, sessions, sign-up/login, API keys
+src/app/api/auth/        JSON sign-up, login, logout
+src/app/(app)/           web UI
+src/app/login, signup    login and sign-up pages
+src/proxy.ts             auth for pages and the API, session renewal
+```

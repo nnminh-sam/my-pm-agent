@@ -1,0 +1,17 @@
+# Scheduling settings. Edit here or ask your agent (update_settings tool).
+timezone: Asia/Ho_Chi_Minh
+# Focus time per weekday — only these hours get scheduled.
+work_hours:
+  mon: ["09:00-12:00", "13:30-17:30"]
+  tue: ["09:00-12:00", "13:30-17:30"]
+  wed: ["09:00-12:00", "13:30-17:30"]
+  thu: ["09:00-12:00", "13:30-17:30"]
+  fri: ["09:00-12:00", "13:30-17:30"]
+days_off: []
+# Replace a specific day's hours, e.g. "2026-10-02": ["09:00-11:00"]
+overrides: {}
+# Multiply estimates when scheduling (see get_estimation_stats → suggested_buffer).
+buffer: 1
+min_block_hours: 0.5
+max_task_hours: 8
+horizon_days: 90

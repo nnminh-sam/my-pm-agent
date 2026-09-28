@@ -1,0 +1,23 @@
+timezone: Asia/Ho_Chi_Minh
+work_hours:
+  mon:
+    - 09:00-12:00
+    - 13:30-17:30
+  tue:
+    - 09:00-12:00
+    - 13:30-17:30
+  wed:
+    - 09:00-12:00
+    - 13:30-17:30
+  thu:
+    - 09:00-12:00
+    - 13:30-17:30
+  fri:
+    - 09:00-12:00
+    - 13:30-17:30
+days_off: []
+overrides: {}
+buffer: 1
+min_block_hours: 0.5
+max_task_hours: 8
+horizon_days: 90

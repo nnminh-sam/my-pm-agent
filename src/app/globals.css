@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --fg: #1c1b19;
+  --muted: #74716b;
+  --border: #e6e4df;
+  --accent: #3f51d8;
+  --accent-soft: #eceffd;
+  --danger: #c3342b;
+  --danger-soft: #fcefed;
+  --warn: #9a6200;
+  --warn-soft: #fcf4e2;
+  --ok: #217a45;
+  --ok-soft: #e9f5ee;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121211;
+    --surface: #1b1b19;
+    --fg: #ecebe7;
+    --muted: #9b988f;
+    --border: #2d2c29;
+    --accent: #8d9bff;
+    --accent-soft: #23264a;
+    --danger: #ff8b80;
+    --danger-soft: #3a1f1c;
+    --warn: #f0c060;
+    --warn-soft: #36290f;
+    --ok: #7ad69c;
+    --ok-soft: #173123;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Rendered markdown (milestone specs, task descriptions) */
+.md {
+  line-height: 1.6;
+}
+.md > * + * {
+  margin-top: 0.75rem;
+}
+.md h1,
+.md h2,
+.md h3 {
+  font-weight: 600;
+  margin-top: 1.25rem;
+}
+.md h1 {
+  font-size: 1.25rem;
+}
+.md h2 {
+  font-size: 1.1rem;
+}
+.md ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.md ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+}
+.md ul:has(> li > input[type="checkbox"]) {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+.md input[type="checkbox"] {
+  margin-right: 0.4rem;
+}
+.md code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--bg);
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+}
+.md pre {
+  background: var(--bg);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.6rem;
+}
