@@ -611,6 +611,79 @@ export function normalizeRepo(remote: string): string {
   return s;
 }
 
+/**
+ * Normalizes a GitHub PR reference to `owner/repo#number` format.
+ * Accepts full PR URLs (https://github.com/owner/repo/pull/123) and short form (owner/repo#123).
+ * Uses normalizeRepo to validate the owner/repo component and ensure it resolves to github.com.
+ * Rejects non-github.com hosts, issues URLs, missing or zero PR numbers, and junk.
+ */
+export function normalizePr(prRef: string): string {
+  const s = prRef.trim();
+  if (!s) throw new Error("PR reference cannot be empty");
+
+  let ownerRepo: string;
+  let number: string;
+
+  // Try short form: owner/repo#123
+  const shortMatch = /^([^#\s]+)#([1-9]\d*)$/.exec(s);
+  if (shortMatch) {
+    [, ownerRepo, number] = shortMatch;
+    // Validate it looks like owner/repo (exactly 2 segments separated by slash)
+    const segments = ownerRepo.split("/");
+    if (segments.length !== 2 || !segments[0] || !segments[1]) {
+      throw new Error(`Invalid owner/repo format in PR reference "${prRef}" (must be owner/repo, got "${ownerRepo}")`);
+    }
+  } else {
+    // Parse URL form
+    let u = s;
+
+    // Remove scheme (https://, http://, etc.)
+    u = u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+
+    // Remove user:password@
+    u = u.replace(/^[^@/]+@/, "");
+
+    // Remove www. prefix
+    u = u.replace(/^www\./, "");
+
+    // Check for github.com (case-insensitive)
+    const githubMatch = /^github\.com(:\d+)?\/(.+)$/.exec(u);
+    if (!githubMatch) {
+      throw new Error(`Only GitHub PRs are supported (got "${prRef}")`);
+    }
+
+    const pathPart = githubMatch[2];
+
+    // Extract owner/repo/pull/number from path
+    // Matches: owner/repo/pull/123 or owner/repo/pull/123/ or owner/repo/pull/123/files or owner/repo/pull/123?query
+    const prMatch = /^(.+?)\/pull\/([1-9]\d*)(?:\/|$|\?|#)/.exec(pathPart);
+
+    if (!prMatch) {
+      // Better error if it's an issues URL
+      if (/\/issues\//i.test(pathPart)) {
+        throw new Error(`GitHub issues are not supported, only pull requests`);
+      }
+      throw new Error(`Invalid PR URL format for "${prRef}"`);
+    }
+
+    [, ownerRepo, number] = prMatch;
+  }
+
+  // Validate owner/repo by normalizing as a github.com remote
+  // This ensures the format is valid and leverages normalizeRepo's validation
+  try {
+    const fullRemote = `github.com/${ownerRepo}`;
+    const normalized = normalizeRepo(fullRemote);
+    // Extract owner/repo from normalized form (e.g., github.com/owner/repo)
+    const parts = normalized.split("/");
+    ownerRepo = parts.slice(-2).join("/");
+  } catch {
+    throw new Error(`Invalid owner/repo format in PR reference "${prRef}"`);
+  }
+
+  return `${ownerRepo}#${number}`;
+}
+
 const normalizeRepos = (repos: string[]) => [...new Set(repos.map(normalizeRepo))];
 
 /** A repo belongs to one project, so a session in it always finds the same one. */
