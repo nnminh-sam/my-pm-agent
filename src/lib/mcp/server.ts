@@ -75,6 +75,7 @@ function taskRow(t: Task, ws: Workspace, plan?: ScheduleResult) {
     not_before: t.not_before,
     depends_on: t.depends_on.length ? t.depends_on.map(code) : undefined,
     tags: t.tags.length ? t.tags : undefined,
+    prs: t.prs.length ? t.prs : undefined,
     order: t.order,
     scheduled: slot ? `${slot.start.date} ${slot.start.time} → ${slot.end.date} ${slot.end.time}` : undefined,
     late_days: slot?.late_days || undefined,
@@ -260,7 +261,7 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Update task",
       description:
-        "Change any task field — status, priority, estimate (or pert), deadline, not_before, depends_on, order, tags, description, milestone (moves it: the code changes) — or append a note. Nullable fields accept null to clear them. Returns the task's new slot and the effect on the schedule.",
+        "Change any task field — status, priority, estimate (or pert), deadline, not_before, depends_on, order, tags, prs, description, milestone (moves it: the code changes) — or append a note. Nullable fields accept null to clear them. Set `prs` right after opening a pull request, with its URL or owner/repo#N (stored as owner/repo#N); it replaces the list ([] clears it). The PR's repo must be linked to the task's project (update_project repos), and company projects take no PRs. Returns the task's new slot and the effect on the schedule.",
       inputSchema: TaskPatch.extend({ id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id).") }),
       annotations: { ...WRITE, idempotentHint: true },
     },
