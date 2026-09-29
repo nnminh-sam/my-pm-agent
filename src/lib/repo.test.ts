@@ -992,11 +992,15 @@ describe("normalizeRepo", () => {
       "ssh://git@github.com/owner/repo",
       "https://user:token@github.com/owner/repo",
       "github.com/owner/repo",
+      "https://www.github.com/Owner/Repo.git",
+      "www.github.com/owner/repo",
+      "git@www.github.com:owner/repo.git",
     ]) {
       expect(repo.normalizeRepo(remote)).toBe("github.com/owner/repo");
     }
     expect(repo.normalizeRepo("ssh://git@gitlab.acme.test:2222/team/app.git")).toBe("gitlab.acme.test:2222/team/app");
     expect(repo.normalizeRepo("https://dev.azure.com/org/project/_git/repo")).toBe("dev.azure.com/org/project/_git/repo");
+    expect(repo.normalizeRepo("https://www.gitlab.com/o/r")).toBe("www.gitlab.com/o/r"); // only github.com drops www.
     for (const bad of ["", "repo", "https://", "not a remote"]) expect(() => repo.normalizeRepo(bad)).toThrow();
   });
 });

@@ -69,7 +69,8 @@ const overview = (n: number) => ({
   base: "main",
   head: "feat",
   updated_at: "2026-09-29T09:00:00.000Z",
-  url: `https://github.com/me/app/pull/${n}`,
+  // A snapshot's url is never used: entries link from the normalized ref.
+  url: `https://snapshot.example/${n}`,
 });
 
 describe.each(backends)("taskGithub on the $name backend", (backend) => {
