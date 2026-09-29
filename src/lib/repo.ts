@@ -23,6 +23,7 @@ import type { Changes, Key } from "./repository/types";
 import { todayIn } from "./time";
 import {
   ApiKey,
+  CommentAuthor,
   LIFECYCLE_STAGES,
   LifecycleStage,
   Milestone,
@@ -34,6 +35,7 @@ import {
   Settings,
   SettingsPatch,
   Task,
+  TaskComment,
   TaskStatus,
   User,
   dateStr,
@@ -316,6 +318,41 @@ export async function getTask(ref: string): Promise<Task> {
   const task = await getRepository().getTask(keyFor("task", ref));
   if (!task) throw new NotFoundError(`Task ${normalizeCode(ref)} not found`);
   return task;
+}
+
+// ---------------------------------------------------------------------------
+// Task comments
+// ---------------------------------------------------------------------------
+
+/** Longest comment body, in characters (after trimming). */
+export const MAX_COMMENT_LENGTH = 10_000;
+
+/**
+ * Appends a plain-text comment to a task (any project, personal or company). The body is kept verbatim apart from
+ * trimming: no markdown, no reference resolution, no escaping (rendering escapes it).
+ */
+export async function addComment(taskRef: string, body: string, author: CommentAuthor): Promise<TaskComment> {
+  const task = await getTask(taskRef);
+  const text = body.trim();
+  if (!text) throw new Error("Comment body is empty");
+  if (text.length > MAX_COMMENT_LENGTH) throw new Error(`Comment is too long (${text.length} characters; the limit is ${MAX_COMMENT_LENGTH})`);
+  const comment: TaskComment = TaskComment.parse({ id: newId(), task_id: task.id, author, created_at: new Date().toISOString(), body: text });
+  await getRepository().insertComment(comment);
+  return comment;
+}
+
+/** Removes one comment, but only through the task it belongs to. */
+export async function deleteComment(taskRef: string, commentId: string): Promise<void> {
+  const task = await getTask(taskRef);
+  if (!(await getRepository().deleteComment(task.id, commentId))) {
+    throw new NotFoundError(`Comment ${commentId} not found on task ${task.code}`);
+  }
+}
+
+/** A task's comments, oldest first. */
+export async function listComments(taskRef: string): Promise<TaskComment[]> {
+  const task = await getTask(taskRef);
+  return getRepository().listComments(task.id);
 }
 
 export async function getMilestone(ref: string): Promise<Milestone> {

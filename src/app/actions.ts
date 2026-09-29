@@ -18,7 +18,7 @@ import { issueApiKey, revokeOwnApiKey } from "@/lib/auth/api-keys";
 import { logIn, signUp as signUpUser, type AuthOutcome } from "@/lib/auth/users";
 import { RECORD_KINDS, saveEditedRecord, type SaveRecordResult } from "@/lib/record-edit";
 import type { RecordKind } from "@/lib/record-markdown";
-import { getUser, listUserApiKeys, logTime, updateTask } from "@/lib/repo";
+import { addComment, deleteComment, getUser, listUserApiKeys, logTime, updateTask } from "@/lib/repo";
 import { TaskStatus } from "@/lib/types";
 
 // Server functions are reachable by POST from any page, so each mutation re-checks auth (not only proxy.ts).
@@ -97,6 +97,19 @@ export async function logTimeAction(formData: FormData) {
   if (!(hours > 0)) throw new Error("Hours must be a positive number");
   const note = String(formData.get("note") ?? "").trim() || undefined;
   await logTime(id, hours, note, formData.get("done") === "on");
+  revalidatePath("/", "layout");
+}
+
+/** Adds a comment as "you". Fields: id (task code or id), body. */
+export async function addCommentAction(formData: FormData) {
+  await requireAuth();
+  await addComment(String(formData.get("id")), String(formData.get("body") ?? ""), "you");
+  revalidatePath("/", "layout");
+}
+
+export async function deleteCommentAction(taskId: string, commentId: string) {
+  await requireAuth();
+  await deleteComment(taskId, commentId);
   revalidatePath("/", "layout");
 }
 

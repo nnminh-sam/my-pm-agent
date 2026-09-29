@@ -609,6 +609,84 @@ describe.each(backends)("$name backend", (backend) => {
     });
   });
 
+  describe("task comments", () => {
+    let a: Task;
+    let b: Task;
+    let c: Task;
+    beforeAll(async () => {
+      await repo.createProject({ title: "Comments", code: "CMT" });
+      await repo.createMilestone({ title: "One", project: "CMT" });
+      await repo.createMilestone({ title: "Two", project: "CMT" });
+      [a, b] = await repo.createTasks([
+        { title: "A", milestone: "CMT-M1" },
+        { title: "B", milestone: "CMT-M1" },
+      ]);
+      [c] = await repo.createTasks([{ title: "C", milestone: "CMT-M2" }]);
+    });
+
+    it("adds comments and lists them oldest first, by code or id", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-09-29T01:00:00.000Z"));
+        const first = await repo.addComment("cmt-m1-t1", "first", "you");
+        vi.setSystemTime(new Date("2026-09-29T02:00:00.000Z"));
+        const second = await repo.addComment(a.id, "second", "agent");
+        expect(first).toMatchObject({ task_id: a.id, author: "you", created_at: "2026-09-29T01:00:00.000Z", body: "first" });
+        expect(first.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        expect(await repo.listComments("CMT-M1-T1")).toEqual([first, second]);
+        expect(await repo.listComments(a.id)).toEqual([first, second]);
+        expect(await repo.listComments("CMT-M1-T2")).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+      await expect(repo.addComment("CMT-M1-T99", "x", "you")).rejects.toBeInstanceOf(repo.NotFoundError);
+      await expect(repo.listComments("CMT-M1-T99")).rejects.toBeInstanceOf(repo.NotFoundError);
+    });
+
+    it("trims the body, and rejects an empty or over-long one", async () => {
+      expect((await repo.addComment(b.id, "  \n line 1\n\n  line 2 \n", "you")).body).toBe("line 1\n\n  line 2");
+      await expect(repo.addComment(b.id, " \n\t ", "you")).rejects.toThrow("Comment body is empty");
+      await expect(repo.addComment(b.id, "x".repeat(repo.MAX_COMMENT_LENGTH + 1), "you")).rejects.toThrow("too long");
+      expect((await repo.addComment(b.id, "x".repeat(repo.MAX_COMMENT_LENGTH), "you")).body).toHaveLength(repo.MAX_COMMENT_LENGTH);
+      await expect(repo.addComment(b.id, "hi", "bot" as "you")).rejects.toThrow();
+      expect(await repo.listComments(b.id)).toHaveLength(2);
+    });
+
+    it("stores markup and references verbatim", async () => {
+      const body = "<script>alert(1)</script> **bold** see CMT-M1-T1 and [x](http://a.b)";
+      const comment = await repo.addComment(c.id, body, "agent");
+      expect(comment.body).toBe(body);
+      expect((await repo.listComments(c.code))[0].body).toBe(body);
+    });
+
+    it("deletes a comment, and says when it or the task is missing", async () => {
+      const [keep, drop] = [await repo.addComment(c.id, "keep", "you"), await repo.addComment(c.id, "drop", "you")];
+      await repo.deleteComment(c.code, drop.id);
+      expect((await repo.listComments(c.id)).map((x) => x.id)).toContain(keep.id);
+      expect((await repo.listComments(c.id)).map((x) => x.id)).not.toContain(drop.id);
+      await expect(repo.deleteComment(c.code, drop.id)).rejects.toThrow(`Comment ${drop.id} not found on task CMT-M2-T1`);
+      await expect(repo.deleteComment(c.code, "../x")).rejects.toBeInstanceOf(repo.NotFoundError);
+      await expect(repo.deleteComment("CMT-M2-T9", keep.id)).rejects.toThrow("Task CMT-M2-T9 not found");
+    });
+
+    it("won't delete a comment through another task (even in a different milestone)", async () => {
+      const mine = await repo.addComment(a.id, "mine", "you");
+      await expect(repo.deleteComment(c.code, mine.id)).rejects.toThrow(/not found on task CMT-M2-T1/);
+      await expect(repo.deleteComment(b.code, mine.id)).rejects.toThrow(/not found on task CMT-M1-T2/);
+      expect((await repo.listComments(a.id)).map((x) => x.id)).toContain(mine.id);
+    });
+
+    it("works on a company project", async () => {
+      await repo.createProject({ title: "Corp comments", code: "CCM", context: "company", repos: ["github.com/corp/ccm"] });
+      await repo.createMilestone({ title: "M", project: "CCM" });
+      const [t] = await repo.createTasks([{ title: "T", milestone: "CCM-M1" }]);
+      const comment = await repo.addComment(t.code, "internal note", "agent");
+      expect(await repo.listComments(t.id)).toEqual([comment]);
+      await repo.deleteComment(t.id, comment.id);
+      expect(await repo.listComments(t.id)).toEqual([]);
+    });
+  });
+
   describe("lifecycle writes", () => {
     let seed: Record<string, unknown>;
     beforeAll(async () => {
