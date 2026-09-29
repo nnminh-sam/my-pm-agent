@@ -89,30 +89,39 @@ function refusalOf(access: GithubAccess | undefined): Refusal | undefined {
   return access.allowed ? undefined : access.refusal;
 }
 
+/**
+ * PR entries for many tasks at once (task lists, chips): one snapshot read per distinct PR and one access check per
+ * distinct repo, database only, never GitHub. Tasks without a PR section (none, or a company project) are absent from
+ * the map. Cost: one indexed read per distinct PR of the listed tasks; only tasks that have `prs` are touched.
+ */
+export async function tasksGithub(
+  tasks: Task[],
+  ws: Pick<Workspace, "milestones" | "projects">,
+): Promise<Map<string, PrEntry[]>> {
+  const parents = lookup(ws.milestones, ws.projects);
+  const withProject = tasks
+    .filter((t) => t.prs.length)
+    .map((task) => ({ task, project: lineage(task, parents).project }))
+    .filter(({ project }) => project?.context !== "company");
+  const refs = [...new Set(withProject.flatMap(({ task }) => task.prs))];
+  const repos = [...new Set(refs.flatMap((ref) => parsePrRef(ref)?.repo ?? []))];
+  const [snapshots, accesses] = await Promise.all([
+    Promise.all(refs.map(async (ref) => [prKey(ref), await getGithubSnapshot(prKey(ref))] as const)),
+    Promise.all(repos.map(async (repo) => [repo, await githubRepoAccess(repo)] as const)),
+  ]);
+  const inputs = { snapshots: new Map(snapshots), access: new Map(accesses) };
+  const out = new Map<string, PrEntry[]>();
+  for (const { task, project } of withProject) {
+    const section = prSection(task, project, inputs);
+    if (section) out.set(task.id, section);
+  }
+  return out;
+}
+
 /** Reads the snapshots and repo access for a task's PRs (database only) and assembles the section. */
 export async function taskGithub(
   task: Task,
   ws: Pick<Workspace, "milestones" | "projects">,
 ) {
-  if (!task.prs.length) return undefined;
-  const { project } = lineage(task, lookup(ws.milestones, ws.projects));
-  if (project?.context === "company") return undefined;
-  const repos = [
-    ...new Set(task.prs.flatMap((ref) => parsePrRef(ref)?.repo ?? [])),
-  ];
-  const [snapshots, accesses] = await Promise.all([
-    Promise.all(
-      task.prs.map(
-        async (ref) =>
-          [prKey(ref), await getGithubSnapshot(prKey(ref))] as const,
-      ),
-    ),
-    Promise.all(
-      repos.map(async (repo) => [repo, await githubRepoAccess(repo)] as const),
-    ),
-  ]);
-  return prSection(task, project, {
-    snapshots: new Map(snapshots),
-    access: new Map(accesses),
-  });
+  return (await tasksGithub([task], ws)).get(task.id);
 }

@@ -3,7 +3,9 @@ import { inheritedPriority, lineage, type Lookup } from "@/lib/hierarchy";
 import type { ScheduleResult } from "@/lib/scheduler";
 import { fmtDay } from "@/lib/time";
 import type { Task } from "@/lib/types";
+import type { PrEntry } from "@/lib/mcp/task-github";
 import { CopyCode } from "./copy-code";
+import { PrChips } from "./pr-chips";
 import { StatusSelect } from "./status-select";
 import { Badge, PriorityBadge, TaskLink, hours } from "./ui";
 
@@ -20,8 +22,16 @@ export function sortForDisplay(tasks: Task[], plan: ScheduleResult) {
 }
 
 /** `codes` maps every task id to its code (dependencies can sit in other milestones). */
-export function TaskTable(props: { tasks: Task[]; plan: ScheduleResult; parents: Lookup; codes: Map<string, string> }) {
-  const { tasks, plan, parents, codes } = props;
+export function TaskTable(props: {
+  tasks: Task[];
+  plan: ScheduleResult;
+  parents: Lookup;
+  codes: Map<string, string>;
+  /** PR entries by task id (tasksGithub), for the chips; snapshots only. */
+  prs?: Map<string, PrEntry[]>;
+  now?: Date;
+}) {
+  const { tasks, plan, parents, codes, prs, now } = props;
   const slots = new Map(plan.tasks.map((t) => [t.id, t]));
   const reasons = new Map(plan.unscheduled.map((u) => [u.id, u.reason]));
   return (
@@ -53,6 +63,7 @@ export function TaskTable(props: { tasks: Task[]; plan: ScheduleResult; parents:
                     {t.depends_on.length > 0 && (
                       <Badge tone="muted" title={`Depends on ${t.depends_on.map((d) => codes.get(d) ?? d).join(", ")}`}>⇠ {t.depends_on.length}</Badge>
                     )}
+                    {now && prs?.get(t.id) && <PrChips entries={prs.get(t.id)!} now={now} />}
                   </div>
                 </td>
                 <td className="px-2 py-2">

@@ -1,14 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { logTimeAction } from "@/app/actions";
+import { Comments } from "@/components/comments";
 import { CopyCode } from "@/components/copy-code";
+import { PrCard } from "@/components/pr-card";
 import { RecordEditor } from "@/components/record-editor";
 import { StatusSelect } from "@/components/status-select";
 import { Card, Markdown, PriorityBadge, TaskLink, hours } from "@/components/ui";
+import { loadPrView } from "@/lib/github/view";
 import { inheritedPriority, lineage, lookup } from "@/lib/hierarchy";
 import { scheduleFor } from "@/lib/planning";
 import { toEditable } from "@/lib/record-markdown";
-import { NotFoundError, getTask, loadWorkspace } from "@/lib/repo";
+import { NotFoundError, getTask, listComments, loadWorkspace } from "@/lib/repo";
 import { fmtDay } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +31,12 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
   const reason = plan.unscheduled.find((u) => u.id === task.id)?.reason;
   const byId = new Map(ws.tasks.map((t) => [t.id, t]));
   const dependents = ws.tasks.filter((t) => t.depends_on.includes(task.id));
+  // Opening the page pulls its PRs (a snapshot under 60s old is served as is). A company project has no PR section.
+  const now = new Date().toISOString();
+  const [comments, prs] = await Promise.all([
+    listComments(task.id),
+    project?.context === "company" ? [] : Promise.all(task.prs.map(async (ref) => ({ ref, view: await loadPrView(ref) }))),
+  ]);
   const closed = task.status === "done" || task.status === "cancelled";
 
   const meta: [string, React.ReactNode][] = [
@@ -79,6 +88,15 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
               <Markdown>{task.body}</Markdown>
             </Card>
 
+            {prs.length > 0 && (
+              <section className="space-y-3">
+                <h2 className="text-xs font-medium tracking-wide text-muted uppercase">Pull requests</h2>
+                {prs.map(({ ref, view }) => (
+                  <PrCard key={ref} prRef={ref} data={view.data} sync={view.sync} syncKey={view.key} now={now} />
+                ))}
+              </section>
+            )}
+
             <Card className="px-5 py-4">
               <h2 className="mb-2 text-xs font-medium tracking-wide text-muted uppercase">Scheduled</h2>
               {slot ? (
@@ -101,6 +119,10 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
               ) : (
                 <p className="text-sm text-muted">{closed ? `Closed${task.completed ? ` on ${fmtDay(task.completed)}` : ""}.` : reason}</p>
               )}
+            </Card>
+
+            <Card className="px-5 py-4">
+              <Comments taskId={task.id} comments={comments} />
             </Card>
           </div>
 

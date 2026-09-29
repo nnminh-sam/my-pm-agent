@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { syncStatus } from "./sync";
-import { badgeView, formatWhen, parseSyncKey, reasonText, relativeTime, type BadgeSync } from "./sync-view";
+import { badgeView, formatWhen, parseSyncKey, reasonText, relativeTime, retryFeedback, type BadgeSync } from "./sync-view";
 
 const now = new Date("2026-09-29T12:00:00Z");
 const ago = (min: number) => new Date(now.getTime() - min * 60_000).toISOString();
@@ -83,4 +83,14 @@ describe("parseSyncKey", () => {
 
 describe("formatWhen", () => {
   it("is fixed UTC", () => expect(formatWhen("2026-09-29T09:05:59Z")).toBe("2026-09-29 09:05 UTC"));
+});
+
+describe("retryFeedback", () => {
+  const now = new Date("2026-09-29T12:00:00Z");
+  const base = { sync: "out_of_sync", fetched_at: "2026-09-29T11:00:00Z", last_attempt_at: null, reason: "github_down", error: null, retry_after: null } as const;
+  it("is silent when the retry worked", () => expect(retryFeedback({ ...base, sync: "synced", reason: null }, now)).toBeNull());
+  it("says still unavailable with the reason", () =>
+    expect(retryFeedback(base, now)).toBe("Still unavailable: GitHub is unavailable"));
+  it("says rate-limited until the reset while retry_after is in the future", () =>
+    expect(retryFeedback({ ...base, reason: "rate_limited", retry_after: "2026-09-29T12:10:00Z" }, now)).toBe("Rate-limited until 2026-09-29 12:10 UTC"));
 });

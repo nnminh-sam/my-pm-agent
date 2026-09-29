@@ -109,6 +109,17 @@ export function badgeView(sync: BadgeSync, now: Date): BadgeView {
 }
 
 /**
+ * What to tell the user after Retry now returned `sync`: null when it worked; otherwise "Rate-limited until …" while
+ * GitHub asks us to wait (the retry was blocked or GitHub limited us again), else "Still unavailable" and the reason.
+ */
+export function retryFeedback(sync: BadgeSync, now: Date): string | null {
+  if (sync.sync === "synced") return null;
+  const view = badgeView(sync, now);
+  if (view.retryBlocked) return view.retryBlocked;
+  return view.reason ? `Still unavailable: ${view.reason}` : "Still unavailable";
+}
+
+/**
  * A key for Retry now, validated at runtime (server actions get arbitrary input): `pr:owner/repo#123` or
  * `repo:owner/repo`. Returns the parts, or null.
  */
