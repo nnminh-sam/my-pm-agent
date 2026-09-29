@@ -221,7 +221,7 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Get task",
       description:
-        "A task's full details, including its markdown description, log and scheduled slot, plus what's needed to start on it: milestone_context (code, title, status, spec), project_context (code, title) and dependencies (code, title, status). Also comments (oldest first: id, author, created_at, body) and, when the task has PRs, pull_requests: per PR its ref, url, overview (title, body, state, GitHub milestone, reviewers with states, assignees) and sync ({sync: synced | out_of_sync | never, fetched_at, reason}). Both come from stored snapshots and never call GitHub (a PR whose repo is no longer linked to a personal project shows no overview, reason not_linked); for the diff or review threads use `gh`.",
+        "A task's full details, including its markdown description, log and scheduled slot, plus what's needed to start on it: milestone_context (code, title, status, spec), project_context (code, title) and dependencies (code, title, status). Also comments (oldest first: id, author, created_at, body) and, when the task has PRs, pull_requests: per PR its ref, url, overview (title, body, state, GitHub milestone, reviewers with states, assignees) and sync ({sync: synced | out_of_sync | never, fetched_at, reason}, plus message and retry_after when the last attempt failed or GitHub rate-limited). Both come from stored snapshots and never call GitHub (a PR whose repo is no longer linked to a personal project shows no overview, reason not_linked); for the diff or review threads use `gh`.",
       inputSchema: z.object({ id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id).") }),
       annotations: READ,
     },
