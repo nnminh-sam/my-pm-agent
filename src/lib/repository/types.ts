@@ -48,6 +48,8 @@ export interface Repository {
   getTask(key: Key): Promise<Task | null>;
   getMilestone(key: Key): Promise<Milestone | null>;
   getProject(key: Key): Promise<Project | null>;
+  /** The projects whose `repos` include a normalized remote (`github.com/owner/repo`), by code. */
+  findProjectsByRepo(remote: string): Promise<Project[]>;
   /**
    * Hands out the next `count` numbers for new milestones of a project (`"milestones"`) or new tasks of a
    * milestone (`"tasks"`) by moving the parent's counter, and returns the first. Like a sequence, it isn't

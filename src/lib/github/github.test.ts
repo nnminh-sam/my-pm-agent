@@ -122,8 +122,20 @@ describe("classifyFailure", () => {
     expect(c(403, { "retry-after": "60" })).toMatchObject({ reason: "rate_limited", retry_after: "2026-01-01T00:01:00.000Z" });
     expect(c(429, { "retry-after": "30", "x-ratelimit-reset": "1767229200" }).retry_after).toBe("2026-01-01T00:00:30.000Z");
   });
-  it("429 with no headers is rate_limited with no retry_after", () => {
-    expect(c(429)).toMatchObject({ reason: "rate_limited", retry_after: null });
+  it("a rate limit with no reset header waits 60s", () => {
+    expect(c(429)).toMatchObject({ reason: "rate_limited", retry_after: "2026-01-01T00:01:00.000Z" });
+    expect(c(403, { "x-ratelimit-remaining": "0" })).toMatchObject({ reason: "rate_limited", retry_after: "2026-01-01T00:01:00.000Z" });
+  });
+  it("a 403 whose message mentions a rate limit is a secondary rate limit", () => {
+    const body = JSON.stringify({ message: "You have exceeded a secondary rate limit. Please wait a few minutes." });
+    expect(c(403, {}, { body })).toMatchObject({ reason: "rate_limited", retry_after: "2026-01-01T00:01:00.000Z" });
+    expect(c(403, { "retry-after": "120" }, { body })).toMatchObject({ reason: "rate_limited", retry_after: "2026-01-01T00:02:00.000Z" });
+    expect(c(403, {}, { body: JSON.stringify({ message: "Resource not accessible by personal access token" }) }).reason).toBe("no_access");
+  });
+  it("the timeout message reflects the timeout", () => {
+    expect(c(null, {}, { timedOut: true }).message).toBe("GitHub did not respond within 5s");
+    expect(c(null, {}, { timedOut: true, timeoutMs: 20 }).message).toBe("GitHub did not respond within 20ms");
+    expect(c(null, {}, { timedOut: true, timeoutMs: 10_000 }).message).toBe("GitHub did not respond within 10s");
   });
   it("captures GitHub's message and request id", () => {
     expect(c(404, { "x-github-request-id": "ABCD:1" }, { body: JSON.stringify({ message: "Not Found" }) })).toMatchObject({
@@ -186,7 +198,7 @@ describe("fetchPr", () => {
         }),
     );
     const r = await fetchPr("o/r", 7, { ...opts(f), timeoutMs: 20 });
-    expect(r).toMatchObject({ ok: false, error: { reason: "timeout", status: null } });
+    expect(r).toMatchObject({ ok: false, error: { reason: "timeout", status: null, message: "GitHub did not respond within 20ms" } });
   });
   it("a network error is github_down", async () => {
     const { f } = fakeFetch(() => {
@@ -220,6 +232,24 @@ describe("fetchPr", () => {
     } finally {
       if (saved !== undefined) process.env.GITHUB_TOKEN = saved;
     }
+  });
+  it("an unparseable 2xx body is a fixed message, not the parser's text", async () => {
+    const { f } = fakeFetch(() => new Response(`<html>${TOKEN} not json`, { status: 200 }));
+    const r = await fetchPr("o/r", 7, opts(f));
+    expect(r).toMatchObject({ ok: false, error: { reason: "github_down", status: null, message: "Invalid JSON from GitHub" } });
+    expect(JSON.stringify(r)).not.toContain("html");
+  });
+  it("rejects repos that aren't owner/repo before building a URL", async () => {
+    const { f, calls } = fakeFetch(() => json(pull));
+    for (const repo of ["o/..", "o/.", "../r", "o/r/pulls", "o", "o/r?x=1", "o/r#1", "", "o /r", "https://github.com/o/r"]) {
+      expect(await fetchPr(repo, 7, opts(f))).toMatchObject({ ok: false, error: { reason: "no_access", status: null } });
+      expect(await fetchOpenPrs(repo, opts(f))).toMatchObject({ ok: false, error: { reason: "no_access", status: null } });
+    }
+    for (const n of [0, -1, 1.5, NaN]) expect(await fetchPr("o/r", n, opts(f))).toMatchObject({ ok: false, error: { reason: "no_access" } });
+    expect(calls).toHaveLength(0);
+    // Dots inside a name are fine.
+    await fetchPr("o/web.site", 7, opts(f));
+    expect(calls[0].url).toBe("http://gh.test/repos/o/web.site/pulls/7");
   });
   it("a rate limit carries retry_after", async () => {
     const { f } = fakeFetch(() => json({ message: "rate limit" }, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1767225600" }));
