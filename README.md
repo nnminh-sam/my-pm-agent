@@ -4,6 +4,7 @@ A personal project manager built to be driven by AI agents.
 
 - **Projects → milestones → tasks**, each with a readable code (`PMA`, `PMA-M1`, `PMA-M1-T3`), stored in Neon Postgres, or as Markdown files with YAML frontmatter that you can read, diff and edit by hand.
 - **A scheduler lays tasks onto your working hours**, following priority, dependencies and deadlines. It re-plans every time an estimate, priority or piece of logged time changes.
+- **Every project follows one lifecycle**, from idea to release and learn. A project's playbook adds checks to each stage and names its environments, and `get_next` tells you what to do next across all your projects. See [Lifecycle](#lifecycle).
 - **An MCP server** at `/api/mcp` lets Claude Code or any other MCP client break milestones down, estimate, rearrange and log time. The same tools are exposed to in-browser agents through WebMCP.
 - **A small web UI** with Schedule, Projects, Backlog, Milestone and Task pages. Copy a code to hand a task to an agent, or edit any project, milestone or task as markdown.
 
@@ -87,6 +88,7 @@ data/
   projects/<id>.md       # code WEB; goal and context in the body
   milestones/<id>.md     # code WEB-M1, `project: <project id>`; spec in the body
   tasks/<id>.md          # code WEB-M1-T3, `milestone: <milestone id>`
+  playbooks/<name>@<version>.yaml   # stored playbook versions (see Lifecycle); written once, never changed
 ```
 
 Files are named by id, so they never need renaming; the code is the second line of the frontmatter.
@@ -101,6 +103,10 @@ title: Website relaunch
 status: active             # planned | active | on_hold | done | cancelled
 priority: P1
 deadline: 2026-11-15
+context: personal          # personal | company (company projects keep only metadata and links)
+playbook: WEB@1.0.0        # the pinned playbook version, once adopted (see Lifecycle)
+repos: [github.com/acme/web]   # git remotes, normalized; a repo belongs to one project
+detectors: [migrations]    # playbook detectors that fired in its repos
 created: 2026-09-27
 last_milestone_number: 2   # managed by the app: the highest milestone number handed out
 ---
@@ -147,6 +153,40 @@ Context and acceptance criteria…
 
 Estimation is calibrated from your own history. `get_estimation_stats` compares actual time with estimated time, overall and per tag, and suggests a `buffer` once 5 or more tasks are done.
 
+## Lifecycle
+
+Tasks say what's left to build. The lifecycle says where each milestone stands on its way to shipping, and what to do next across projects. `src/lib/lifecycle.ts` is pure and tested, like the scheduler.
+
+- **Stages are fixed:** idea → spec → design → plan → build → verify → release → learn, then done. After learn, a milestone can go through maintain first, when its retro proposed playbook changes.
+- **A playbook adds checks to the stages.** A project pins one version (`PMA@1.0.0`), normally its own playbook compiled from shared layers (`sdlc`, `personal`, `company`). A stored version never changes, so pinning an older one rolls back. The seed `sdlc@1.0.0` is `src/lib/playbooks/sdlc.yaml`.
+- **Checks are keyed `<stage>.<name>`.** `auto` checks are computed: tasks estimated, small enough, done, time logged, deployed to every environment. `probe` checks come from repo signals such as test runs. `attest` checks are recorded with evidence. A milestone leaves a stage only when that stage's checks are passed, or waived with a reason.
+- **Environments come from the playbook, in promotion order** (`dev → prod`). A milestone in release reaches them one at a time. An environment's own checks, such as a rollback plan for prod, come before deploying to it.
+- **Detectors add checks when a repo has something.** For example, `migrations/` adds `release.migration_paired` for prod.
+- **Company projects keep only metadata and links.** A playbook compiled from the `company` layer is stored without its check, principle or environment text.
+
+A milestone carries its stage, its check results and the environments it has reached:
+
+```markdown
+---
+code: WEB-M2
+status: in_progress        # kept in step with the stage
+stage: release
+checks:
+  spec.accepted:
+    status: passed         # passed | failed | waived (a check with no result is open)
+    at: 2026-10-01
+    note: https://…/spec   # evidence, or a waiver's reason
+deployments:
+  dev:
+    at: 2026-10-20
+    ref: a1b2c3d
+---
+```
+
+`get_next` lists warnings first: a project with no playbook, a playbook with no project rules, or a newer version to adopt. Then it gives one entry per next action (the same step for several milestones is listed once), ranked by deadline risk, priority, later stage first and deadline. Today's scheduled blocks come last.
+
+To adopt a playbook, store it and then pin it. Store it with `sync_playbook`, or with `POST /api/playbooks` and the compiled playbook as JSON (201 new, 200 already stored, 409 different content under a stored version). Then call `set_playbook_version` with `stages` to place the project's existing milestones.
+
 ## MCP tools
 
 | Tool | What it does |
@@ -162,6 +202,12 @@ Estimation is calibrated from your own history. `get_estimation_stats` compares 
 | `get_schedule` | Day-by-day plan (text or JSON) |
 | `get_estimation_stats` | Estimate accuracy, overall and per tag |
 | `update_settings` | Working hours, days off, buffer and so on |
+| `get_next` | Lifecycle warnings and ranked next actions across projects, plus today's blocks |
+| `get_lifecycle` | One project: pinned playbook, environments, each milestone's stage, checks and next action |
+| `pass_check` / `fail_check` / `waive_check` / `reopen_check` | Record a check's result: evidence, or a waiver's reason |
+| `advance_stage` | Next stage once the current stage's checks pass, or back to an earlier stage |
+| `record_deployment` | A milestone reached an environment, in promotion order |
+| `sync_playbook` / `set_playbook_version` | Store a playbook version, and pin a project to one (adopt, upgrade, roll back) |
 
 ### Hand a task to an agent
 
@@ -274,6 +320,9 @@ Settings come from the store (`settings` table, or `settings.yaml`); until they'
 
 ```
 src/lib/scheduler.ts     scheduling algorithm (pure, tested)
+src/lib/lifecycle.ts     lifecycle engine: checks, next actions, warnings (pure, tested)
+src/lib/playbook.ts      compiled playbook and stored version schemas
+src/lib/playbooks/       seed playbooks (sdlc@1.0.0)
 src/lib/estimation.ts    PERT, rollups, calibration stats
 src/lib/repo.ts          projects/milestones/tasks/settings/users: validation, codes and domain rules
 src/lib/codes.ts         code formats, parsing, natural ordering, UUID v7 ids
@@ -286,6 +335,7 @@ migrations/              SQL schema, applied by `npm run db:migrate`
 scripts/                 db:smoke, db:migrate, db:import, db:export, auth:*-key(s)
 src/lib/mcp/             MCP tools, prompts, server instructions
 src/app/api/mcp/         MCP endpoint (+ WebMCP bridge script)
+src/app/api/playbooks/   POST a compiled playbook version (what pm-flow calls)
 src/lib/auth/            auth modes, password hashing, JWTs, sessions, sign-up/login, API keys
 src/app/api/auth/        JSON sign-up, login, logout
 src/app/(app)/           web UI

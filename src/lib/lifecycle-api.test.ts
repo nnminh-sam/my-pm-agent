@@ -174,6 +174,14 @@ describe("lifecycle MCP tools", () => {
     expect(await tool("sync_playbook", { playbook: { ...pma, version: "1.1.0" } })).toMatchObject({ ref: "PMA@1.1.0", created: true });
     const next = await tool("get_next", { project: "PMA" });
     expect(next.warnings).toEqual([{ code: "playbook_update", project: "PMA", message: "PMA@1.1.0 is available (pinned PMA@1.0.0)" }]);
+
+    // Upgrade, then roll back: re-pinning is all it takes, and both versions stay stored.
+    expect(await tool("set_playbook_version", { project: "PMA", version: "PMA@1.1.0" })).toMatchObject({ playbook: "PMA@1.1.0", warnings: [] });
+    expect(await tool("set_playbook_version", { project: "PMA", version: "PMA@1.0.0" })).toMatchObject({
+      playbook: "PMA@1.0.0",
+      warnings: [{ code: "playbook_update" }],
+    });
+    expect((await repo.loadWorkspace()).playbooks.map((v) => v.ref)).toEqual(["PMA@1.0.0", "PMA@1.1.0"]);
     expect(await tool("pass_check", { milestone: "PMA-M1", check: "ship.it" })).toMatchObject({
       error: expect.stringContaining("ship.it isn't a check of PMA's playbook PMA@1.0.0"),
     });
