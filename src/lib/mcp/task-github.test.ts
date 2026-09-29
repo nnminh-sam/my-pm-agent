@@ -11,7 +11,7 @@ import { FileRepository } from "../repository/file";
 import { PgRepository } from "../repository/postgres";
 import { FsStore } from "../store/fs";
 import { taskContext } from "./task-context";
-import { taskGithub } from "./task-github";
+import { taskGithub, tasksGithub } from "./task-github";
 
 const tempDirs: string[] = [];
 afterAll(async () => {
@@ -164,6 +164,18 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
       overview: null,
       sync: { sync: "never", fetched_at: null, reason: null },
     });
+  });
+
+  it("tasksGithub (list chips) reads snapshots for many tasks in one pass, with 0 fetch calls", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const ws = await repo.loadWorkspace();
+    const map = await tasksGithub(ws.tasks, ws);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    const mixed = await repo.getTask("ME-M1-T1");
+    expect(map.get(mixed.id)?.map((e) => e.sync.sync)).toEqual(["synced", "out_of_sync", "never"]);
+    // Tasks without PRs and company tasks have no entry.
+    expect([...map.keys()]).toEqual([mixed.id]);
   });
 
   it("leaves the section out for a task without PRs and for company projects", async () => {

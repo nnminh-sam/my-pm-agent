@@ -54,6 +54,22 @@ describe("retrySync", () => {
     expect(gh.calls).toHaveLength(0);
   });
 
+  it("makes 0 fetch calls while the stored retry_after is in the future, and returns that status", async () => {
+    const gh = down();
+    const now = new Date("2026-09-29T12:00:00.000Z");
+    for (const key of ["pr:me/app#7", "repo:me/app"]) {
+      await repo.upsertGithubSnapshot({
+        key,
+        last_attempt_at: "2026-09-29T11:59:00.000Z",
+        last_error: { reason: "rate_limited", status: 429, message: "slow down", request_id: null },
+        retry_after: "2026-09-29T12:30:00.000Z",
+      });
+      const r = await retrySync(key, { ...gh.options, now: () => now });
+      expect(r).toMatchObject({ ok: true, sync: { sync: "never", reason: "rate_limited", retry_after: "2026-09-29T12:30:00.000Z" } });
+    }
+    expect(gh.calls).toHaveLength(0);
+  });
+
   it("forces a pull for a valid key", async () => {
     const gh = down();
     const r = await retrySync("repo:me/app", gh.options);

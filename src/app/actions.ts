@@ -18,7 +18,8 @@ import { issueApiKey, revokeOwnApiKey } from "@/lib/auth/api-keys";
 import { logIn, signUp as signUpUser, type AuthOutcome } from "@/lib/auth/users";
 import { RECORD_KINDS, saveEditedRecord, type SaveRecordResult } from "@/lib/record-edit";
 import type { RecordKind } from "@/lib/record-markdown";
-import { addComment, deleteComment, getUser, listUserApiKeys, logTime, updateTask } from "@/lib/repo";
+import { parseAddComment, parseDeleteComment, type CommentResult } from "@/lib/comment-input";
+import { NotFoundError, addComment, deleteComment, getUser, listUserApiKeys, logTime, updateTask } from "@/lib/repo";
 import { retrySync, type RetryResult } from "@/lib/github/view";
 import { TaskStatus } from "@/lib/types";
 
@@ -101,17 +102,31 @@ export async function logTimeAction(formData: FormData) {
   revalidatePath("/", "layout");
 }
 
-/** Adds a comment as "you". Fields: id (task code or id), body. */
-export async function addCommentAction(formData: FormData) {
+/** Adds a comment as "you". Fields: id (task code or id), body. Failures come back as `{ ok: false, message }`. */
+export async function addCommentAction(_prev: CommentResult | null, formData: FormData): Promise<CommentResult> {
   await requireAuth();
-  await addComment(String(formData.get("id")), String(formData.get("body") ?? ""), "you");
+  const input = parseAddComment(formData);
+  if (!input.ok) return input;
+  try {
+    await addComment(input.id, input.body, "you");
+  } catch (err) {
+    return { ok: false, message: err instanceof NotFoundError ? err.message : "Couldn't save the comment" };
+  }
   revalidatePath("/", "layout");
+  return { ok: true };
 }
 
-export async function deleteCommentAction(taskId: string, commentId: string) {
+export async function deleteCommentAction(taskId: string, commentId: string): Promise<CommentResult> {
   await requireAuth();
-  await deleteComment(taskId, commentId);
+  const input = parseDeleteComment(taskId, commentId);
+  if (!input.ok) return input;
+  try {
+    await deleteComment(input.taskId, input.commentId);
+  } catch (err) {
+    return { ok: false, message: err instanceof NotFoundError ? err.message : "Couldn't delete the comment" };
+  }
   revalidatePath("/", "layout");
+  return { ok: true };
 }
 
 /** Retry now on a sync badge. `key` is `pr:owner/repo#123` or `repo:owner/repo`; anything else is refused. */

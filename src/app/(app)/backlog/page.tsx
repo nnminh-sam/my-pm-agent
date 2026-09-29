@@ -4,6 +4,7 @@ import { TaskTable } from "@/components/task-table";
 import { Badge, Card, Empty, PriorityBadge } from "@/components/ui";
 import { lookup, type Lookup } from "@/lib/hierarchy";
 import { milestoneSummary, projectSummary, scheduleFor } from "@/lib/planning";
+import { tasksGithub, type PrEntry } from "@/lib/mcp/task-github";
 import { loadWorkspace, type Workspace } from "@/lib/repo";
 import type { ScheduleResult } from "@/lib/scheduler";
 import { PRIORITIES, type Milestone, type Task } from "@/lib/types";
@@ -12,8 +13,16 @@ export const dynamic = "force-dynamic";
 
 const isOpen = (status: string) => status !== "done" && status !== "cancelled";
 
-function MilestoneCard(props: { milestone: Milestone; tasks: Task[]; ws: Workspace; plan: ScheduleResult; parents: Lookup }) {
-  const { milestone, tasks, ws, plan, parents } = props;
+function MilestoneCard(props: {
+  milestone: Milestone;
+  tasks: Task[];
+  ws: Workspace;
+  plan: ScheduleResult;
+  parents: Lookup;
+  prs: Map<string, PrEntry[]>;
+  now: Date;
+}) {
+  const { milestone, tasks, ws, plan, parents, prs, now } = props;
   const s = milestoneSummary(milestone, ws, plan);
   return (
     <Card>
@@ -29,7 +38,7 @@ function MilestoneCard(props: { milestone: Milestone; tasks: Task[]; ws: Workspa
         </div>
       </div>
       {tasks.length ? (
-        <TaskTable tasks={tasks} plan={plan} parents={parents} codes={new Map(ws.tasks.map((t) => [t.id, t.code]))} />
+        <TaskTable tasks={tasks} plan={plan} parents={parents} codes={new Map(ws.tasks.map((t) => [t.id, t.code]))} prs={prs} now={now} />
       ) : (
         <p className="px-4 py-3 text-sm text-muted">No tasks — ask your agent to break down {milestone.code}.</p>
       )}
@@ -44,6 +53,9 @@ export default async function BacklogPage({ searchParams }: { searchParams: Prom
   const plan = scheduleFor(ws);
   const parents = lookup(ws.milestones, ws.projects);
   const tasks = ws.tasks.filter((t) => showClosed || isOpen(t.status));
+  // PR chips read snapshots only (one read per distinct PR), never GitHub.
+  const prs = await tasksGithub(tasks, ws);
+  const now = new Date();
   const milestones = ws.milestones
     .filter((m) => showClosed || isOpen(m.status))
     .sort((a, b) => PRIORITIES.indexOf(milestoneSummary(a, ws, plan).priority) - PRIORITIES.indexOf(milestoneSummary(b, ws, plan).priority));
@@ -52,7 +64,7 @@ export default async function BacklogPage({ searchParams }: { searchParams: Prom
     .sort((a, b) => PRIORITIES.indexOf(a.priority) - PRIORITIES.indexOf(b.priority));
 
   const card = (m: Milestone) => (
-    <MilestoneCard key={m.id} milestone={m} tasks={tasks.filter((t) => t.milestone === m.id)} ws={ws} plan={plan} parents={parents} />
+    <MilestoneCard key={m.id} milestone={m} tasks={tasks.filter((t) => t.milestone === m.id)} ws={ws} plan={plan} parents={parents} prs={prs} now={now} />
   );
 
   return (

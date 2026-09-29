@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { retryGithubSync } from "@/app/actions";
-import { badgeView, type BadgeSync, type BadgeTone } from "@/lib/github/sync-view";
+import { badgeView, retryFeedback, type BadgeSync, type BadgeTone } from "@/lib/github/sync-view";
 
 const TONE: Record<BadgeTone, string> = {
   quiet: "text-muted",
@@ -46,7 +46,7 @@ export function SyncBadge({
     startTransition(async () => {
       try {
         const result = await retryGithubSync(syncKey!);
-        setFailure(result.ok ? null : result.message);
+        setFailure(result.ok ? retryFeedback(result.sync, new Date()) : result.message);
       } catch {
         setFailure("Retry failed");
       }
@@ -55,7 +55,7 @@ export function SyncBadge({
   return (
     <details className="relative inline-block text-[11px]">
       <summary
-        className={`inline-flex cursor-pointer list-none items-center rounded px-1.5 py-0.5 font-medium whitespace-nowrap focus-visible:outline-2 focus-visible:outline-accent ${TONE[view.tone]}`}
+        className={`inline-flex cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden rounded px-1.5 py-0.5 font-medium whitespace-nowrap focus-visible:outline-2 focus-visible:outline-accent ${TONE[view.tone]}`}
       >
         {view.label}
       </summary>
