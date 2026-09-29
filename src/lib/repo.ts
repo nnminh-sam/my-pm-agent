@@ -14,7 +14,7 @@ import {
   type CodeKind,
 } from "./codes";
 import { pert } from "./estimation";
-import { githubRemote } from "./github/sync";
+import { githubRemote, type GithubFailure } from "./github/sync";
 import { lineage, lookup } from "./hierarchy";
 import { milestoneLifecycle, nextStages, projectChecks, statusForStage } from "./lifecycle";
 import { Playbook, PlaybookVersion, comparePlaybookVersions, parsePlaybookRef, playbookRef } from "./playbook";
@@ -775,6 +775,14 @@ export async function getGithubSnapshot(key: string): Promise<GithubSnapshot | n
 /** Stores a snapshot whole (validated, timestamps normalized by the backend). */
 export async function upsertGithubSnapshot(snapshot: GithubSnapshot): Promise<void> {
   await getRepository().upsertGithubSnapshot(snapshot);
+}
+
+/**
+ * Records a failed fetch without touching `data` / `fetched_at` (a webhook may have written them meanwhile); inserts a
+ * row without data when there is none. Returns the snapshot as stored.
+ */
+export async function recordGithubFailure(key: string, failure: GithubFailure): Promise<GithubSnapshot> {
+  return getRepository().recordGithubFailure(key, failure);
 }
 
 export type GithubAccess =

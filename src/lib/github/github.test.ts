@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fetchOpenPrs, fetchPr } from "./client";
-import { classifyFailure, mapPr, mapRepoPrItem, redact, reduceReviews } from "./overview";
+import { classifyFailure, mapPr, mapRepoPrItem, redact, reduceReviews, retryAfterFrom } from "./overview";
 
 const TOKEN = "ghp_faketoken1234567890";
 const SECRET = "whsec_fakesecret";
@@ -121,6 +121,19 @@ describe("classifyFailure", () => {
   it("rate limit: retry-after seconds", () => {
     expect(c(403, { "retry-after": "60" })).toMatchObject({ reason: "rate_limited", retry_after: "2026-01-01T00:01:00.000Z" });
     expect(c(429, { "retry-after": "30", "x-ratelimit-reset": "1767229200" }).retry_after).toBe("2026-01-01T00:00:30.000Z");
+  });
+  it("rate limit: retry_after is capped at now + 1h; negative, non-finite or empty values are ignored", () => {
+    expect(c(429, { "retry-after": "86400" }).retry_after).toBe("2026-01-01T01:00:00.000Z");
+    expect(c(429, { "x-ratelimit-reset": String(1767225600 + 7 * 86400) }).retry_after).toBe("2026-01-01T01:00:00.000Z");
+    expect(c(429, { "retry-after": "1e400" }).retry_after).toBe("2026-01-01T00:01:00.000Z");
+    for (const headers of [{ "retry-after": "-5" }, { "retry-after": "Infinity" }, { "retry-after": "NaN" }, { "retry-after": " " }]) {
+      expect(c(429, headers).retry_after).toBe("2026-01-01T00:01:00.000Z");
+    }
+    for (const reset of ["-1", "0", "Infinity", "soon", ""]) {
+      expect(c(429, { "x-ratelimit-reset": reset }).retry_after).toBe("2026-01-01T00:01:00.000Z");
+    }
+    expect(retryAfterFrom(h({ "retry-after": "-1", "x-ratelimit-reset": "1767225660" }), NOW)).toBe("2026-01-01T00:01:00.000Z");
+    expect(retryAfterFrom(h({}), NOW)).toBeNull();
   });
   it("a rate limit with no reset header waits 60s", () => {
     expect(c(429)).toMatchObject({ reason: "rate_limited", retry_after: "2026-01-01T00:01:00.000Z" });

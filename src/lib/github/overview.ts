@@ -14,7 +14,7 @@ export type PrReviewer = z.infer<typeof PrReviewer>;
 /** The only PR data my_pm shows or stores. */
 export const PrOverview = z.object({
   repo: z.string(),
-  number: z.number().int(),
+  number: z.number().int().positive(),
   title: z.string(),
   body: z.string(),
   state: z.enum(PR_STATES),
@@ -34,7 +34,7 @@ export type PrOverview = z.infer<typeof PrOverview>;
 /** An item of a repo's open-PR list (reviewers are the requested ones only). */
 export const RepoPrItem = z.object({
   repo: z.string(),
-  number: z.number().int(),
+  number: z.number().int().positive(),
   title: z.string(),
   state: z.enum(["open", "draft"]),
   author: z.string().nullable(),
@@ -97,18 +97,26 @@ export function reduceReviews(reviews: unknown): Map<string, PrReviewer> {
       const tb = Date.parse(cleanText(b.r.submitted_at)) || 0;
       return ta - tb || a.i - b.i;
     });
-  for (const { r } of sorted) {
-    const who = login(r.user);
-    if (!who) continue;
-    const key = who.toLowerCase();
-    const s = cleanText(r.state).toUpperCase();
-    if (s === "APPROVED") out.set(key, { login: who, state: "approved" });
-    else if (s === "CHANGES_REQUESTED") out.set(key, { login: who, state: "changes_requested" });
-    else if (s === "COMMENTED") {
-      if (!out.has(key)) out.set(key, { login: who, state: "commented" });
-    } else if (s === "DISMISSED") out.delete(key);
-  }
+  for (const { r } of sorted) applyReview(out, r);
   return out;
+}
+
+/**
+ * Apply one review (a GitHub review object, state in any case) to the per-reviewer states, by the rules of
+ * reduceReviews. Mutates and returns `states`. The webhook uses it for a single `pull_request_review` delivery.
+ */
+export function applyReview(states: Map<string, PrReviewer>, review: unknown): Map<string, PrReviewer> {
+  const r = obj(review);
+  const who = login(r.user);
+  if (!who) return states;
+  const key = who.toLowerCase();
+  const s = cleanText(r.state).toUpperCase();
+  if (s === "APPROVED") states.set(key, { login: who, state: "approved" });
+  else if (s === "CHANGES_REQUESTED") states.set(key, { login: who, state: "changes_requested" });
+  else if (s === "COMMENTED") {
+    if (!states.has(key)) states.set(key, { login: who, state: "commented" });
+  } else if (s === "DISMISSED") states.delete(key);
+  return states;
 }
 
 /** Reviewers = everyone with a review state, plus requested reviewers who haven't reviewed (pending). */
@@ -198,13 +206,32 @@ function githubMessage(body: string | undefined): string {
   return body;
 }
 
-/** retry-after (seconds) wins over x-ratelimit-reset (epoch seconds); null when neither is usable. */
+/** The longest a rate limit may hold off GitHub calls, whatever the headers say (GitHub's own windows are 1h). */
+export const RETRY_AFTER_MAX_MS = 3600_000;
+
+/**
+ * retry-after (seconds) wins over x-ratelimit-reset (epoch seconds); null when neither is usable. A negative, zero
+ * (reset) or non-finite value is unusable; a usable one is capped at now + 1h, so a bogus header can't block a key
+ * for long.
+ */
 export function retryAfterFrom(headers: FailureInput["headers"], now: Date): string | null {
-  const ra = Number(headers?.get("retry-after"));
-  if (headers?.get("retry-after") && Number.isFinite(ra) && ra >= 0) return new Date(now.getTime() + ra * 1000).toISOString();
-  const reset = Number(headers?.get("x-ratelimit-reset"));
-  if (headers?.get("x-ratelimit-reset") && Number.isFinite(reset) && reset > 0) return new Date(reset * 1000).toISOString();
+  const t = now.getTime();
+  const capped = (ms: number) => new Date(Math.min(ms, t + RETRY_AFTER_MAX_MS)).toISOString();
+  const raHeader = headers?.get("retry-after");
+  const ra = Number(raHeader);
+  if (raHeader && raHeader.trim() !== "" && Number.isFinite(ra) && ra >= 0) return capped(t + ra * 1000);
+  const resetHeader = headers?.get("x-ratelimit-reset");
+  const reset = Number(resetHeader);
+  if (resetHeader && resetHeader.trim() !== "" && Number.isFinite(reset) && reset > 0) return capped(reset * 1000);
   return null;
+}
+
+/**
+ * A 2xx whose body isn't what GitHub documents (not a PR, not a list): a failed fetch, so the old snapshot stays.
+ * The message is fixed, so it can't quote anything from the body.
+ */
+export function unreadableResponse(): GithubError {
+  return { reason: "github_down", status: null, message: "GitHub sent a response my_pm couldn't read", request_id: null, retry_after: null };
 }
 
 /** How long each GitHub call may take. */

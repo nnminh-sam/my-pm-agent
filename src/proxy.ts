@@ -16,6 +16,11 @@ import {
 // Pages anyone may open (their forms and the /api/auth routes check the auth mode themselves).
 const AUTH_PAGES = new Set(["/login", "/signup"]);
 
+// Routes that authenticate each request themselves, in every auth mode: GitHub's webhook deliveries carry no session
+// or API key, and the route verifies their HMAC signature instead (refusing all while GITHUB_WEBHOOK_SECRET is unset).
+// Exact paths only.
+const SELF_AUTHENTICATED = new Set(["/api/github/webhook"]);
+
 function deny(request: NextRequest, message: string, clearCookie: boolean) {
   const secure = isSecureRequest(request.headers.get("x-forwarded-proto"));
   let response: NextResponse;
@@ -36,6 +41,7 @@ function deny(request: NextRequest, message: string, clearCookie: boolean) {
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  if (SELF_AUTHENTICATED.has(pathname)) return NextResponse.next();
   const mode = authMode();
   if (mode === "open") return NextResponse.next();
 
