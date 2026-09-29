@@ -39,7 +39,7 @@ type Ws = Pick<Workspace, "tasks" | "milestones" | "projects">;
 
 /** Frontmatter keys in schema order (see src/lib/types.ts). */
 export const EDITABLE_KEYS: Record<RecordKind, readonly string[]> = {
-  task: ["title", "status", "priority", "milestone", "estimate", "deadline", "not_before", "depends_on", "tags"],
+  task: ["title", "status", "priority", "milestone", "estimate", "deadline", "not_before", "depends_on", "tags", "prs"],
   milestone: ["title", "status", "project", "priority", "deadline"],
   project: ["code", "title", "status", "priority", "deadline"],
 };
@@ -72,6 +72,7 @@ function editableFields(kind: RecordKind, record: Task | Milestone | Project, ws
       not_before: t.not_before,
       depends_on: t.depends_on.map((id) => codeOf(ws.tasks, id)),
       tags: t.tags,
+      prs: t.prs,
     };
   }
   if (kind === "milestone") {
@@ -124,6 +125,8 @@ export function fromEditable<K extends RecordKind>(kind: K, text: string, record
     if (depends && !sameList(depends, t.depends_on)) patch.depends_on = depends;
     const tags = read.list("tags");
     if (tags && !sameList(tags, t.tags)) patch.tags = tags;
+    const prs = read.list("prs");
+    if (prs && !sameList(prs, t.prs)) patch.prs = prs;
   } else if (kind === "milestone") {
     const m = record as Milestone;
     const status = read.choice("status", MILESTONE_STATUSES, true);

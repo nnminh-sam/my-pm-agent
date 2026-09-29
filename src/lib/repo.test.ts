@@ -5,7 +5,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { Client } from "@neondatabase/serverless";
 import YAML from "yaml";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { newId } from "./codes";
 import { neonDb, type Db, type Row } from "./db";
 import { migrate, type MigrationSession } from "./migrate";
@@ -415,6 +415,67 @@ describe.each(backends)("$name backend", (backend) => {
         expect(text).toContain("prs: [nnminh-sam/my-pm-agent#12, acme/web.site#3]");
       }
       expect((await repo.loadWorkspace()).problems).toEqual([]);
+    });
+
+    it("sets a task's PRs through updateTask: normalized, de-duplicated, replaced, cleared", async () => {
+      await repo.updateProject("GH", { repos: ["https://github.com/GH/Site.git"] });
+      const set = await repo.updateTask(other.id, {
+        prs: ["https://github.com/GH/Site/pull/7/files", "gh/site#7", "GH/Site#9"],
+      });
+      expect(set.prs).toEqual(["gh/site#7", "gh/site#9"]);
+      expect((await repo.getTask(other.id)).prs).toEqual(["gh/site#7", "gh/site#9"]);
+      // Other patches leave the list alone; a new list replaces it; [] clears it.
+      expect((await repo.updateTask(other.id, { title: "Other!" })).prs).toEqual(["gh/site#7", "gh/site#9"]);
+      expect((await repo.updateTask(other.id, { prs: ["gh/site#11"] })).prs).toEqual(["gh/site#11"]);
+      expect((await repo.updateTask(other.id, { prs: [] })).prs).toEqual([]);
+    });
+
+    it("rejects malformed PRs and repos the project doesn't link, changing nothing", async () => {
+      await repo.updateTask(other.id, { prs: ["gh/site#1"] });
+      await expect(repo.updateTask(other.id, { title: "Nope", prs: ["gh/site#2", "gh/other#3"] })).rejects.toThrow(
+        /gh\/other#3 is in gh\/other, which isn't linked to project GH.*Linked repos: github.com\/gh\/site.*update_project/,
+      );
+      await expect(repo.updateTask(other.id, { prs: ["https://gitlab.com/gh/site/pull/2"] })).rejects.toThrow(/^prs: Only GitHub PRs/);
+      await expect(repo.updateTask(other.id, { prs: ["not a pr"] })).rejects.toBeInstanceOf(repo.PrReferenceError);
+      expect(await repo.getTask(other.id)).toMatchObject({ title: "Other!", prs: ["gh/site#1"] });
+      // A project with no linked repos says so.
+      await repo.createProject({ title: "Bare", code: "BR" });
+      await repo.createMilestone({ title: "M", project: "BR" });
+      const [bare] = await repo.createTasks([{ title: "Bare task", milestone: "BR-M1" }]);
+      await expect(repo.updateTask(bare.id, { prs: ["gh/site#1"] })).rejects.toThrow("It has no linked repos");
+    });
+
+    it("refuses PRs on a company project and never contacts GitHub", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      try {
+        await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
+        await repo.createMilestone({ title: "M", project: "CO" });
+        const [corp] = await repo.createTasks([{ title: "Review", milestone: "CO-M1" }]);
+        await expect(repo.updateTask(corp.id, { prs: ["corp/app#5"] })).rejects.toThrow(/CO is a company project/);
+        expect((await repo.getTask(corp.id)).prs).toEqual([]);
+        // Clearing is always fine.
+        expect((await repo.updateTask(corp.id, { prs: [] })).prs).toEqual([]);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it("re-checks PRs when a task moves to another milestone", async () => {
+      await repo.createProject({ title: "Mv", code: "MV", repos: ["github.com/mv/one"] });
+      await repo.createProject({ title: "Mv2", code: "MW", repos: ["github.com/mv/two"] });
+      await repo.createMilestone({ title: "A", project: "MV" });
+      await repo.createMilestone({ title: "B", project: "MV" });
+      await repo.createMilestone({ title: "C", project: "MW" });
+      const [moved] = await repo.createTasks([{ title: "Mover", milestone: "MV-M1" }]);
+      await repo.updateTask(moved.id, { prs: ["mv/one#4"] });
+      // Same project: fine. Another project that doesn't link the repo: refused, nothing moves.
+      expect(await repo.updateTask(moved.id, { milestone: "MV-M2" })).toMatchObject({ code: "MV-M2-T1", prs: ["mv/one#4"] });
+      await expect(repo.updateTask(moved.id, { milestone: "MW-M1" })).rejects.toThrow(/Can't move MV-M2-T1 to MW-M1: PR mv\/one#4 is in mv\/one, which isn't linked to project MW/);
+      expect((await repo.getTask(moved.id)).code).toBe("MV-M2-T1");
+      // Clearing the PRs in the same patch lets the move through; so does listing ones the destination links.
+      expect(await repo.updateTask(moved.id, { milestone: "MW-M1", prs: ["mv/two#8"] })).toMatchObject({ code: "MW-M1-T1", prs: ["mv/two#8"] });
+      expect(await repo.updateTask(moved.id, { milestone: "MV-M1", prs: [] })).toMatchObject({ code: "MV-M1-T2", prs: [] });
     });
 
     it("keeps one snapshot per key and replaces it whole", async () => {

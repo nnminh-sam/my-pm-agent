@@ -14,6 +14,7 @@ import {
   type CodeKind,
 } from "./codes";
 import { pert } from "./estimation";
+import { lineage, lookup } from "./hierarchy";
 import { milestoneLifecycle, nextStages, projectChecks, statusForStage } from "./lifecycle";
 import { Playbook, PlaybookVersion, comparePlaybookVersions, parsePlaybookRef, playbookRef } from "./playbook";
 import { getRepository, type Repository } from "./repository";
@@ -82,6 +83,12 @@ export const TaskPatch = z.object({
   not_before: dateStr.nullable().optional(),
   depends_on: z.array(z.string()).optional().describe("Task codes (or ids)."),
   tags: z.array(z.string()).optional(),
+  prs: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Pull requests this task covers, as GitHub URLs or owner/repo#N (stored as owner/repo#N). Replaces the list; [] clears it. Each repo must be linked to the task's project; company projects take none.",
+    ),
   order: z.number().nullable().optional(),
   description: z.string().optional().describe("Replaces the markdown body."),
   append_note: z.string().optional().describe("Appended to the body under a dated heading."),
@@ -165,6 +172,8 @@ export function normalizeId(id: string, prefix: Prefix) {
 export class NotFoundError extends Error {}
 /** A write that clashes with what's stored (e.g. different content under a stored playbook version). */
 export class ConflictError extends Error {}
+/** A PR reference that can't be kept: malformed, an unlinked repo, or a company project. Its message says how to fix it. */
+export class PrReferenceError extends Error {}
 
 const EXAMPLE: Record<CodeKind, string> = { project: "PMA", milestone: "PMA-M1", task: "PMA-M1-T3" };
 const LABEL: Record<CodeKind, string> = { project: "Project", milestone: "Milestone", task: "Task" };
@@ -411,6 +420,7 @@ export async function updateTask(ref: string, patch: TaskPatch): Promise<Task> {
   if (patch.deadline !== undefined) next.deadline = patch.deadline ?? undefined;
   if (patch.not_before !== undefined) next.not_before = patch.not_before ?? undefined;
   if (patch.tags !== undefined) next.tags = patch.tags;
+  if (patch.prs !== undefined) next.prs = normalizePrs(patch.prs);
   if (patch.order !== undefined) next.order = patch.order ?? undefined;
   if (patch.description !== undefined) next.body = patch.description;
   if (patch.append_note) next.body = withNote(next.body, `Note · ${today}`, patch.append_note);
@@ -427,14 +437,20 @@ export async function updateTask(ref: string, patch: TaskPatch): Promise<Task> {
   }
   // Last, once everything else is valid, so a rejected patch doesn't use up a number.
   let changes: Changes = { tasks: [next] };
-  if (patch.milestone !== undefined) {
-    const milestone = await getMilestone(patch.milestone);
-    if (milestone.id !== task.milestone) {
-      const ws = await loadWorkspace();
-      const number = await getRepository().allocateNumbers("tasks", milestone.id, 1);
-      Object.assign(next, { milestone: milestone.id, number, code: taskCode(milestone.code, number) });
-      changes = withMentions(ws, changes, new Map([[task.code, next.code]]));
-    }
+  const milestone = patch.milestone !== undefined ? await getMilestone(patch.milestone) : undefined;
+  const moving = milestone !== undefined && milestone.id !== task.milestone;
+  // The PRs the task ends up with must fit the project it ends up in, whether the PRs or the milestone changed.
+  if (next.prs.length && (patch.prs !== undefined || moving)) {
+    const ws = await loadWorkspace();
+    const { project } = lineage({ milestone: milestone?.id ?? task.milestone }, lookup(ws.milestones, ws.projects));
+    if (!project) throw new NotFoundError(`Project of task ${task.code} not found`);
+    assertPrsFit(next.prs, project, moving ? `Can't move ${task.code} to ${milestone.code}` : `Can't set prs on ${task.code}`);
+  }
+  if (moving) {
+    const ws = await loadWorkspace();
+    const number = await getRepository().allocateNumbers("tasks", milestone.id, 1);
+    Object.assign(next, { milestone: milestone.id, number, code: taskCode(milestone.code, number) });
+    changes = withMentions(ws, changes, new Map([[task.code, next.code]]));
   }
 
   await getRepository().save(changes);
@@ -711,6 +727,42 @@ export function normalizePr(prRef: string): string {
   }
 
   return `${ownerRepo}#${number}`;
+}
+
+/** Normalizes each entry (URL or owner/repo#N) and drops repeats, keeping the first occurrence's place. */
+function normalizePrs(prs: string[]): string[] {
+  return [
+    ...new Set(
+      prs.map((pr) => {
+        try {
+          return normalizePr(pr);
+        } catch (err) {
+          throw new PrReferenceError(`prs: ${(err as Error).message}. Use a github.com pull request URL or owner/repo#123.`);
+        }
+      }),
+    ),
+  ];
+}
+
+/**
+ * PR references only make sense on a personal project whose linked repos include each PR's repo. Company projects
+ * never touch GitHub, so they take none; otherwise link the repo first (update_project repos).
+ */
+function assertPrsFit(prs: string[], project: Pick<Project, "code" | "context" | "repos">, action: string) {
+  if (project.context === "company") {
+    throw new PrReferenceError(
+      `${action}: ${project.code} is a company project, which takes no PR references (they would need GitHub). Clear prs, or note the PR in a comment.`,
+    );
+  }
+  for (const pr of prs) {
+    const repo = pr.slice(0, pr.lastIndexOf("#"));
+    if (!project.repos.includes(`github.com/${repo}`)) {
+      const linked = project.repos.length ? `Linked repos: ${project.repos.join(", ")}` : "It has no linked repos";
+      throw new PrReferenceError(
+        `${action}: PR ${pr} is in ${repo}, which isn't linked to project ${project.code}. ${linked}. Add it with update_project (repos) first, or remove the PR.`,
+      );
+    }
+  }
 }
 
 const normalizeRepos = (repos: string[]) => [...new Set(repos.map(normalizeRepo))];

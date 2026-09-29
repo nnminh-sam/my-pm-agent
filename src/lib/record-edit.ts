@@ -7,6 +7,7 @@ import {
   getTask,
   loadWorkspace,
   NotFoundError,
+  PrReferenceError,
   updateMilestone,
   updateProject,
   updateTask,
@@ -73,7 +74,7 @@ function load(kind: RecordKind, id: string) {
  * referenced record deleted, a code taken, a cycle formed meanwhile). Anything else is a bug or an outage: rethrown.
  */
 function expectedError(err: unknown): string {
-  if (err instanceof NotFoundError) return err.message;
+  if (err instanceof NotFoundError || err instanceof PrReferenceError) return err.message;
   if (err instanceof z.ZodError) return z.prettifyError(err);
   if (err instanceof Error && /^(Dependency cycle|Project code .* is already used)/.test(err.message)) return err.message;
   throw err;
