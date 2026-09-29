@@ -13,6 +13,7 @@ import {
   TaskPatch,
   createMilestone,
   createProject,
+  addComment,
   advanceStage,
   createTasks,
   getMilestone,
@@ -272,6 +273,21 @@ export function registerPmServer(server: McpServer) {
         const { plan, summary } = impact(ws, [task.id]);
         return json({ task: taskRow(task, ws, plan), schedule: summary });
       }),
+  );
+
+  server.registerTool(
+    "add_comment",
+    {
+      title: "Add a task comment",
+      description:
+        "Append a plain-text note to a task (any project). Use it for progress, findings or hand-off notes; it is stored as written, never edited. Not markdown, and my_pm never resolves references in it (a PR link or task code stays text). Comments are append-only over MCP (the user can delete them in the web UI); get_task returns them. Returns the created comment (author is agent). Max 10000 characters.",
+      inputSchema: z.object({
+        id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id)."),
+        body: z.string().describe("The note, plain text."),
+      }),
+      annotations: WRITE,
+    },
+    async ({ id, body }) => run(async () => json(await addComment(id, body, "agent"))),
   );
 
   server.registerTool(
