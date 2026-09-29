@@ -14,6 +14,7 @@ import {
   createMilestone,
   createProject,
   addComment,
+  listComments,
   advanceStage,
   createTasks,
   getMilestone,
@@ -39,6 +40,7 @@ import { nowIn } from "../time";
 import { LIFECYCLE_STAGES, LifecycleStage, SettingsPatch, TaskStatus, type Milestone, type Project, type Task } from "../types";
 import { CHECKIN_PROMPT, REPLAN_PROMPT, breakdownPrompt, estimatePrompt, projectBreakdownPrompt, workOnTaskPrompt } from "./prompts";
 import { taskContext } from "./task-context";
+import { taskGithub } from "./task-github";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -219,19 +221,24 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Get task",
       description:
-        "A task's full details, including its markdown description, log and scheduled slot, plus what's needed to start on it: milestone_context (code, title, status, spec), project_context (code, title) and dependencies (code, title, status).",
+        "A task's full details, including its markdown description, log and scheduled slot, plus what's needed to start on it: milestone_context (code, title, status, spec), project_context (code, title) and dependencies (code, title, status). Also comments (oldest first: id, author, created_at, body) and, when the task has PRs, pull_requests: per PR its ref, url, overview (title, body, state, GitHub milestone, reviewers with states, assignees) and sync ({sync: synced | out_of_sync | never, fetched_at, reason}). Both come from stored snapshots and never call GitHub (a PR whose repo is no longer linked to a personal project shows no overview, reason not_linked); for the diff or review threads use `gh`.",
       inputSchema: z.object({ id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id).") }),
       annotations: READ,
     },
     async ({ id }) =>
       run(async () => {
         const [task, ws] = await Promise.all([getTask(id), loadWorkspace()]);
+        const [comments, pull_requests] = await Promise.all([listComments(task.id), taskGithub(task, ws)]);
         return json({
           ...taskRow(task, ws, scheduleFor(ws)),
           created: task.created,
           completed: task.completed,
           description: task.body,
           ...taskContext(task, ws),
+          pull_requests,
+          comments: comments.length
+            ? comments.map((c) => ({ id: c.id, author: c.author, created_at: c.created_at, body: c.body }))
+            : undefined,
         });
       }),
   );
