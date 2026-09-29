@@ -80,7 +80,7 @@ export function prSection(
     if (status.error?.message)
       sync.message = status.error.message.slice(0, MESSAGE_MAX);
     if (status.retry_after) sync.retry_after = status.retry_after;
-    return { ref, url: overview?.url ?? url, overview, sync };
+    return { ref, url, overview, sync };
   });
 }
 

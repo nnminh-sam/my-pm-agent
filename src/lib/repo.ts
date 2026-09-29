@@ -661,7 +661,9 @@ export function normalizeRepo(remote: string): string {
     .replace(/^[^@/]+@/, "")
     .replace(/\/+$/, "")
     .replace(/\.git$/i, "")
-    .toLowerCase();
+    .toLowerCase()
+    // www.github.com is github.com: only the canonical host matches PR checks and findProjectsByRepo.
+    .replace(/^www\.github\.com(?=\/)/, "github.com");
   if (!/^[a-z0-9.-]+(:\d+)?(\/[^\s/]+)+$/.test(s)) throw new Error(`"${remote}" isn't a git remote like github.com/owner/repo`);
   return s;
 }
