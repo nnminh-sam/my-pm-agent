@@ -48,6 +48,7 @@ export function milestoneSummary(milestone: Milestone, ws: Workspace, plan: Sche
     title: milestone.title,
     project: project?.code,
     status: milestone.status,
+    stage: milestone.stage,
     priority,
     deadline,
     ...outlook(
@@ -70,6 +71,10 @@ export function projectSummary(project: Project, ws: Workspace, plan: ScheduleRe
     status: project.status,
     priority: project.priority,
     deadline: project.deadline,
+    context: project.context,
+    playbook: project.playbook,
+    repos: project.repos.length ? project.repos : undefined,
+    detectors: project.detectors.length ? project.detectors : undefined,
     milestones: milestones.length,
     milestones_by_status: milestoneCounts,
     ...outlook(

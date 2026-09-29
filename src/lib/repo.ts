@@ -163,6 +163,8 @@ export function normalizeId(id: string, prefix: Prefix) {
 }
 
 export class NotFoundError extends Error {}
+/** A write that clashes with what's stored (e.g. different content under a stored playbook version). */
+export class ConflictError extends Error {}
 
 const EXAMPLE: Record<CodeKind, string> = { project: "PMA", milestone: "PMA-M1", task: "PMA-M1-T3" };
 const LABEL: Record<CodeKind, string> = { project: "Project", milestone: "Milestone", task: "Task" };
@@ -677,7 +679,8 @@ export async function syncPlaybook(input: unknown, at: Date = new Date()): Promi
   const hash = hashPlaybook(definition);
   const ref = playbookRef(definition);
   const repository = getRepository();
-  const changed = () => new Error(`${ref} is already stored with different content; versions never change, so release it as a new version`);
+  const changed = () =>
+    new ConflictError(`${ref} is already stored with different content; versions never change, so release it as a new version`);
   const existing = await repository.getPlaybookVersion(ref);
   if (existing) {
     if (existing.hash !== hash) throw changed();

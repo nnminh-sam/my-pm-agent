@@ -19,6 +19,8 @@ const mcp = createMcpHandler(registerPmServer, {
       "list_milestones",
       "get_milestone",
       "get_estimation_stats",
+      "get_next",
+      "get_lifecycle",
       "update_task",
       "log_time",
     ],

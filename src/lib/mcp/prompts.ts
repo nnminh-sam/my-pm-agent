@@ -17,6 +17,13 @@ Workflows:
 - Progress: log_time as work happens (this feeds estimate calibration). log_time with done=true completes a task.
 - A bare task code from the user (e.g. PMA-M1-T3) means "work on this task": call get_task, read its milestone spec and dependencies, then do the work — update_task status in_progress, log_time as work happens, log_time with done=true when finished (the work_on_task prompt has the steps).
 
+Lifecycle — every project follows the same stages: idea → spec → design → plan → build → verify → release → learn (→ maintain, optional) → done. A project's playbook (a pinned version, e.g. PMA@1.0.0) adds checks to the stages (auto: computed from tasks and deployments; probe: from repo signals; attest: recorded with evidence) and names its environments (e.g. dev → prod). Each milestone carries its stage, its check results and the environments it has reached.
+- What's next across projects: get_next (warnings, ranked next actions, today's blocks); get_lifecycle shows one project.
+- Checks: pass_check with evidence, fail_check with what failed, waive_check with a reason, reopen_check to clear. advance_stage moves a milestone on only once its stage's checks pass; never change a milestone's status to get around that.
+- Releases: record_deployment for each environment, in the playbook's order.
+- Adopting a playbook: sync_playbook stores a version, then set_playbook_version pins the project and places its existing milestones (stages). Re-pin to upgrade or roll back.
+- Company projects (context company) keep only metadata and links in my_pm: link to company documents in specs and evidence rather than copying them.
+
 Start with get_overview. Confirm with the user before bulk-creating, cancelling or re-prioritising several tasks.`;
 
 export function projectBreakdownPrompt(projectId: string) {
