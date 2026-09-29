@@ -532,6 +532,37 @@ describe.each(backends)("$name backend", (backend) => {
       }
     });
 
+    it("validates snapshots and stores timestamps as toISOString() on every backend", async () => {
+      const key = "pr:acme/api#1";
+      await backendRepo.upsertGithubSnapshot({
+        key,
+        data: { title: "x" },
+        fetched_at: "2026-09-29T01:05:00Z",
+        last_attempt_at: "2026-09-29T01:05:00.1Z",
+        retry_after: "2026-09-29T02:00:00.123456Z",
+      });
+      expect(await backendRepo.getGithubSnapshot(key)).toEqual({
+        key,
+        data: { title: "x" },
+        fetched_at: "2026-09-29T01:05:00.000Z",
+        last_attempt_at: "2026-09-29T01:05:00.100Z",
+        retry_after: "2026-09-29T02:00:00.123Z",
+      });
+      for (const bad of [{ key, fetched_at: "yesterday" }, { key, fetched_at: "2026-09-29T01:05:00+07:00" }, { key, data: "text" }, { key: "PR:Acme/Api#1" }]) {
+        await expect(backendRepo.upsertGithubSnapshot(bad as GithubSnapshot)).rejects.toThrow();
+      }
+      expect((await backendRepo.getGithubSnapshot(key))?.fetched_at).toBe("2026-09-29T01:05:00.000Z");
+    });
+
+    it("finds the projects linking a repo, and whether GitHub may be contacted for it", async () => {
+      expect((await backendRepo.findProjectsByRepo("github.com/gh/site")).map((p) => p.code)).toEqual(["GH"]);
+      expect((await backendRepo.findProjectsByRepo("github.com/corp/app")).map((p) => p.code)).toEqual(["CO"]);
+      expect(await backendRepo.findProjectsByRepo("github.com/nobody/here")).toEqual([]);
+      expect(await repo.githubRepoAccess("gh/site")).toEqual({ allowed: true });
+      expect(await repo.githubRepoAccess("corp/app")).toMatchObject({ allowed: false, refusal: "company", message: expect.stringContaining("CO") });
+      expect(await repo.githubRepoAccess("nobody/here")).toMatchObject({ allowed: false, refusal: "not_linked" });
+    });
+
     it("keeps a task's comments oldest first and deletes them one at a time", async () => {
       const at = (minute: number) => `2026-09-29T01:${String(minute).padStart(2, "0")}:00.000Z`;
       const second = { id: newId(), task_id: task.id, author: "agent" as const, created_at: at(2), body: "Opened PR 12.\n\n  <script>alert(1)</script>\n" };
@@ -561,7 +592,7 @@ describe.each(backends)("$name backend", (backend) => {
 
       const all = await backendRepo.loadSnapshotsAndComments();
       expect(all.comments).toEqual([second, elsewhere].sort((a, b) => (a.task_id < b.task_id ? -1 : 1)));
-      expect(all.snapshots.map((s) => s.key)).toEqual(["pr:nnminh-sam/my-pm-agent#12", "repo:nnminh-sam/my-pm-agent"]);
+      expect(all.snapshots.map((s) => s.key)).toEqual(["pr:acme/api#1", "pr:nnminh-sam/my-pm-agent#12", "repo:nnminh-sam/my-pm-agent"]);
       expect(all.problems).toEqual([]);
     });
 

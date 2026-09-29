@@ -201,6 +201,8 @@ export type ApiKeyMeta = z.infer<typeof ApiKeyMeta>;
 export type ApiKey = ApiKeyMeta;
 
 const jsonObject = z.record(z.string(), z.json());
+/** A datetimeStr stored as `toISOString()` (UTC, milliseconds), so both backends hand back the same text. */
+const instantStr = datetimeStr.transform((s) => new Date(s).toISOString());
 
 /**
  * The last data fetched from GitHub for a key, and how the last attempt went (`github_snapshots/<key>.yaml`;
@@ -213,12 +215,15 @@ export const GithubSnapshot = z.object({
   /** A PR's overview, or a repo's open PRs. */
   data: z.union([jsonObject, z.array(z.json())]).optional(),
   /** When the last successful fetch (or webhook delivery) finished. */
-  fetched_at: datetimeStr.optional(),
-  last_attempt_at: datetimeStr.optional(),
-  /** Why the last attempt failed; absent when it succeeded. */
+  fetched_at: instantStr.optional(),
+  last_attempt_at: instantStr.optional(),
+  /**
+   * Why the last attempt failed (a GithubError without its retry_after, which is the column below); absent when it
+   * succeeded. Read it through snapshotError in src/lib/github/sync.ts.
+   */
   last_error: jsonObject.optional(),
   /** Don't call GitHub for this key before then (a rate-limit reset). */
-  retry_after: datetimeStr.optional(),
+  retry_after: instantStr.optional(),
 });
 export type GithubSnapshot = z.infer<typeof GithubSnapshot>;
 

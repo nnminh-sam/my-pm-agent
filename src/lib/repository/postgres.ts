@@ -97,9 +97,10 @@ const snapshotParams = (s: GithubSnapshot) => [
   json(s.last_error),
   s.retry_after ?? null,
 ];
+/** Validated first, as the file backend does, so both store the same normalized timestamps. */
 const insertSnapshot = (s: GithubSnapshot): Statement => ({
   text: `insert into github_snapshots (${SNAPSHOT_COLUMNS}) values (${SNAPSHOT_VALUES})`,
-  params: snapshotParams(s),
+  params: snapshotParams(GithubSnapshot.parse(s)),
 });
 const snapshotFromRow = (row: Row) => GithubSnapshot.parse(withoutNulls(row));
 
@@ -223,6 +224,11 @@ export class PgRepository implements Repository {
 
   getProject(key: Key) {
     return this.get<Project>("projects", key);
+  }
+
+  async findProjectsByRepo(remote: string) {
+    const rows = await this.db.query(`select ${selectList("projects")} from projects where $1 = any(repos) order by code`, [remote]);
+    return rows.map((row) => fromRow<Project>("projects", row));
   }
 
   /** One atomic update of the parent's counter, outside any insert transaction (like nextval). */

@@ -182,6 +182,12 @@ export class FileRepository implements Repository {
     return this.find<Project>("projects", key);
   }
 
+  /** A scan of the directory, like a lookup by code. */
+  async findProjectsByRepo(remote: string) {
+    const projects = await this.loadDir<Project>("projects", []);
+    return projects.filter((p) => p.repos.includes(remote)).sort((a, b) => compareText(a.code, b.code));
+  }
+
   /** Read, bump, write: not atomic, which is fine for a single user (Postgres does it in one statement). */
   async allocateNumbers(kind: "milestones" | "tasks", parentId: string, count: number) {
     const dir = PARENT[kind];

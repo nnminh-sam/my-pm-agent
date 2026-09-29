@@ -14,6 +14,7 @@ import {
   type CodeKind,
 } from "./codes";
 import { pert } from "./estimation";
+import { githubRemote } from "./github/sync";
 import { lineage, lookup } from "./hierarchy";
 import { milestoneLifecycle, nextStages, projectChecks, statusForStage } from "./lifecycle";
 import { Playbook, PlaybookVersion, comparePlaybookVersions, parsePlaybookRef, playbookRef } from "./playbook";
@@ -37,6 +38,7 @@ import {
   User,
   dateStr,
   type Deployment,
+  type GithubSnapshot,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -763,6 +765,35 @@ function assertPrsFit(prs: string[], project: Pick<Project, "code" | "context" |
       );
     }
   }
+}
+
+/** The snapshot stored under a key (`pr:owner/repo#123`, `repo:owner/repo`); null when there is none. */
+export async function getGithubSnapshot(key: string): Promise<GithubSnapshot | null> {
+  return getRepository().getGithubSnapshot(key);
+}
+
+/** Stores a snapshot whole (validated, timestamps normalized by the backend). */
+export async function upsertGithubSnapshot(snapshot: GithubSnapshot): Promise<void> {
+  await getRepository().upsertGithubSnapshot(snapshot);
+}
+
+export type GithubAccess =
+  | { allowed: true }
+  | { allowed: false; refusal: "not_linked" | "company"; message: string };
+
+/**
+ * Whether my_pm may contact GitHub about a repo (`owner/repo`): only when it's linked to at least one personal
+ * project. Checked when data is read, not only when `prs` are written: a task's stored PRs can outlive the link
+ * (a milestone moved, a project's repos or context changed).
+ */
+export async function githubRepoAccess(repo: string): Promise<GithubAccess> {
+  const projects = await getRepository().findProjectsByRepo(githubRemote(repo));
+  if (projects.some((p) => p.context === "personal")) return { allowed: true };
+  if (projects.length) {
+    const codes = projects.map((p) => p.code).join(", ");
+    return { allowed: false, refusal: "company", message: `${repo} is linked only to company projects (${codes}), which never contact GitHub.` };
+  }
+  return { allowed: false, refusal: "not_linked", message: `${repo} isn't linked to any project. Link it with update_project (repos).` };
 }
 
 const normalizeRepos = (repos: string[]) => [...new Set(repos.map(normalizeRepo))];

@@ -179,6 +179,8 @@ export interface FailureInput {
   body?: string;
   /** The call was aborted by the timeout. */
   timedOut?: boolean;
+  /** The timeout that applied, for the message (default GITHUB_TIMEOUT_MS). */
+  timeoutMs?: number;
   /** Error text for a network failure. */
   networkMessage?: string;
   now: Date;
@@ -205,11 +207,20 @@ export function retryAfterFrom(headers: FailureInput["headers"], now: Date): str
   return null;
 }
 
+/** How long each GitHub call may take. */
+export const GITHUB_TIMEOUT_MS = 5000;
+/** A rate limit that came without a usable reset header waits this long. */
+export const RATE_LIMIT_DEFAULT_MS = 60_000;
+
+/** `5s`, or `250ms` for a timeout that isn't whole seconds. */
+export const formatTimeout = (ms: number) => (ms >= 1000 && ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`);
+
 /**
  * Classify a failed call:
  * - no response: timeout if aborted, else github_down;
  * - 401 bad_token; 5xx github_down;
- * - 429, or 403 with `x-ratelimit-remaining: 0` / `retry-after`: rate_limited (retry_after from the headers);
+ * - 429, or 403 with `x-ratelimit-remaining: 0` / `retry-after` / a "rate limit" message (a secondary rate limit):
+ *   rate_limited, retry_after from the headers or else now + RATE_LIMIT_DEFAULT_MS;
  * - other 403 / 404: no_access; any other 4xx: no_access; any other status (3xx, ...): github_down.
  */
 export function classifyFailure(f: FailureInput): GithubError {
@@ -222,13 +233,19 @@ export function classifyFailure(f: FailureInput): GithubError {
     retry_after,
   });
   if (f.status === null) {
-    return f.timedOut ? make("timeout", "GitHub did not respond within 5s") : make("github_down", f.networkMessage || "Network error");
+    return f.timedOut
+      ? make("timeout", `GitHub did not respond within ${formatTimeout(f.timeoutMs ?? GITHUB_TIMEOUT_MS)}`)
+      : make("github_down", f.networkMessage || "Network error");
   }
   const message = githubMessage(f.body) || `HTTP ${f.status}`;
   const limited =
     f.status === 429 ||
-    (f.status === 403 && (f.headers?.get("x-ratelimit-remaining") === "0" || f.headers?.get("retry-after") != null));
-  if (limited) return make("rate_limited", message, retryAfterFrom(f.headers, f.now));
+    (f.status === 403 &&
+      (f.headers?.get("x-ratelimit-remaining") === "0" || f.headers?.get("retry-after") != null || /rate limit/i.test(message)));
+  if (limited) {
+    const retryAfter = retryAfterFrom(f.headers, f.now) ?? new Date(f.now.getTime() + RATE_LIMIT_DEFAULT_MS).toISOString();
+    return make("rate_limited", message, retryAfter);
+  }
   if (f.status === 401) return make("bad_token", message);
   if (f.status >= 500) return make("github_down", message);
   if (f.status >= 400) return make("no_access", message);
