@@ -19,6 +19,7 @@ import { logIn, signUp as signUpUser, type AuthOutcome } from "@/lib/auth/users"
 import { RECORD_KINDS, saveEditedRecord, type SaveRecordResult } from "@/lib/record-edit";
 import type { RecordKind } from "@/lib/record-markdown";
 import { addComment, deleteComment, getUser, listUserApiKeys, logTime, updateTask } from "@/lib/repo";
+import { retrySync, type RetryResult } from "@/lib/github/view";
 import { TaskStatus } from "@/lib/types";
 
 // Server functions are reachable by POST from any page, so each mutation re-checks auth (not only proxy.ts).
@@ -111,6 +112,14 @@ export async function deleteCommentAction(taskId: string, commentId: string) {
   await requireAuth();
   await deleteComment(taskId, commentId);
   revalidatePath("/", "layout");
+}
+
+/** Retry now on a sync badge. `key` is `pr:owner/repo#123` or `repo:owner/repo`; anything else is refused. */
+export async function retryGithubSync(key: string): Promise<RetryResult> {
+  await requireAuth();
+  const result = await retrySync(key);
+  if (result.ok) revalidatePath("/", "layout");
+  return result;
 }
 
 export type SaveRecordState = SaveRecordResult | null;
