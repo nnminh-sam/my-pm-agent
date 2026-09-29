@@ -170,7 +170,7 @@ The mock logged 0 calls. The unit tests cover this too (`repo.test.ts` and `pull
 ### 10. The PAT and webhook secret never appear in client bundles, MCP output or last_error: PASS
 
 `grep -rF` found neither `fake-token-…` nor `fake-secret-…` in any of:
-- all of `.next` in the harness build, including `.next/static` and the server chunks, although both secrets were set during the build;
+- `.next/static` of the harness build (the client bundle), although both secrets were set during the build;
 - all 24 saved page HTMLs;
 - the stored snapshots and comments;
 - the MCP output of `get_task`, `get_project`, `list_tasks` and `get_overview`;
