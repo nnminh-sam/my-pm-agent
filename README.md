@@ -185,6 +185,8 @@ deployments:
 
 `get_next` lists warnings first: a project with no playbook, a playbook with no project rules, or a newer version to adopt. Then it gives one entry per next action (the same step for several milestones is listed once), ranked by deadline risk, priority, later stage first and deadline. Today's scheduled blocks come last.
 
+Playbooks are written and released in the private [playbooks repo](https://github.com/nnminh-sam/playbooks). That repo also holds the `sdlc` Claude Code plugin, which starts each session in a project's repo with a brief (status, next actions, the rules that apply) and adds `/sdlc:next`, `/sdlc:rules`, `/sdlc:status` and `/sdlc:adopt`. Its README is the guide to using all of this, with examples.
+
 To adopt a playbook, store it and then pin it. Store it with `sync_playbook`, or with `POST /api/playbooks` and the compiled playbook as JSON (201 new, 200 already stored, 409 different content under a stored version). Then call `set_playbook_version` with `stages` to place the project's existing milestones.
 
 ## MCP tools
