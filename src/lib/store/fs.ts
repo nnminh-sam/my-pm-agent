@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FileStore } from "./types";
 
@@ -46,6 +46,16 @@ export class FsStore implements FileStore {
       return true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw err;
+    }
+  }
+
+  async remove(rel: string) {
+    try {
+      await unlink(this.resolve(rel));
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw err;
     }
   }

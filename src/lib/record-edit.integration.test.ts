@@ -89,7 +89,7 @@ async function neonTestDb(url: string): Promise<PgRepository> {
   };
   try {
     await migrate(session);
-    await session.exec("truncate tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
+    await session.exec("truncate task_comments, github_snapshots, tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
   } finally {
     await client.end();
   }

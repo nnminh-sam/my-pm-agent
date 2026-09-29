@@ -5,9 +5,12 @@ import { PlaybookVersion } from "../playbook";
 import type { FileStore } from "../store/types";
 import {
   ApiKeyMeta,
+  GITHUB_SNAPSHOT_KEY,
+  GithubSnapshot,
   MilestoneMeta,
   PLAYBOOK_REF,
   ProjectMeta,
+  TaskComment,
   TaskMeta,
   UserMeta,
   type ApiKey,
@@ -16,12 +19,34 @@ import {
   type Task,
   type User,
 } from "../types";
-import { COUNTER, idNumber, type Changes, type Key, type Records, type Repository } from "./types";
+import { COUNTER, idNumber, type Changes, type Key, type Records, type Repository, type SnapshotsAndComments } from "./types";
 
 const SETTINGS_FILE = "settings.yaml";
 /** Playbook versions: `playbooks/<name>@<version>.yaml`, written once and never changed. */
 const PLAYBOOKS_DIR = "playbooks";
 const playbookPath = (ref: string) => `${PLAYBOOKS_DIR}/${ref}.yaml`;
+/** GitHub snapshots: `github_snapshots/<key>.yaml`, the key URI-encoded (it holds `:`, `/` and `#`). */
+const SNAPSHOTS_DIR = "github_snapshots";
+const snapshotPath = (key: string) => `${SNAPSHOTS_DIR}/${encodeURIComponent(key)}.yaml`;
+/**
+ * Task comments: `comments/<task id>/<id>.yaml`, so a task's comments are one directory. Comments whose task file is
+ * gone are ignored, like the rows Postgres cascades away with their task.
+ */
+const COMMENTS_DIR = "comments";
+const commentPath = (taskId: string, id: string) => `${COMMENTS_DIR}/${taskId}/${id}.yaml`;
+const isUuid = (value: string) => z.uuid().safeParse(value).success;
+const basename = (p: string, ext: string) => p.split("/").pop()!.slice(0, -ext.length);
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+/** Postgres order: by task, then oldest first, then id. */
+const compareComments = (a: TaskComment, b: TaskComment) =>
+  compareText(a.task_id, b.task_id) || Date.parse(a.created_at) - Date.parse(b.created_at) || compareText(a.id, b.id);
+/** YAML in the zod schema's key order; absent optional fields are left out. */
+const toYaml = (shape: object, value: object) => {
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(shape).filter((k) => record[k] !== undefined);
+  return YAML.stringify(Object.fromEntries(keys.map((k) => [k, record[k]])), { lineWidth: 0 });
+};
+
 const problem = (where: string, err: unknown) =>
   `${where}: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`;
 
@@ -198,6 +223,83 @@ export class FileRepository implements Repository {
 
   async insertPlaybookVersion(version: PlaybookVersion) {
     return this.store.create(playbookPath(version.ref), YAML.stringify(version, { lineWidth: 0 }));
+  }
+
+  /** Null for anything that isn't a snapshot key. */
+  async getGithubSnapshot(key: string) {
+    if (!GITHUB_SNAPSHOT_KEY.test(key)) return null;
+    const text = await this.store.read(snapshotPath(key));
+    return text === null ? null : GithubSnapshot.parse(YAML.parse(text));
+  }
+
+  /** Validated first, as Postgres' checks would. */
+  async upsertGithubSnapshot(snapshot: GithubSnapshot) {
+    const valid = GithubSnapshot.parse(snapshot);
+    await this.store.write(snapshotPath(valid.key), toYaml(GithubSnapshot.shape, valid));
+  }
+
+  /** Unparseable files are skipped, as they are in loadAll. */
+  private async readComments(taskId: string, problems: string[]) {
+    const paths = (await this.store.list(`${COMMENTS_DIR}/${taskId}`)).filter((p) => p.endsWith(".yaml"));
+    const items = await mapLimit(paths, 16, async (p) => {
+      const text = await this.store.read(p);
+      if (text === null) return undefined;
+      try {
+        const comment = TaskComment.parse(YAML.parse(text));
+        if (comment.task_id !== taskId || comment.id !== basename(p, ".yaml")) throw new Error("its ids don't match its path");
+        return comment;
+      } catch (err) {
+        problems.push(problem(p, err));
+        return undefined;
+      }
+    });
+    return items.filter((x): x is TaskComment => x !== undefined);
+  }
+
+  async listComments(taskId: string) {
+    if (!isUuid(taskId)) return [];
+    return (await this.readComments(taskId, [])).sort(compareComments);
+  }
+
+  /** Validated first, and only on a stored task, as Postgres' checks and foreign key would. */
+  async insertComment(comment: TaskComment) {
+    const valid = TaskComment.parse(comment);
+    if ((await this.store.read(`tasks/${valid.task_id}.md`)) === null) throw new Error(`No task with id ${valid.task_id}`);
+    if (!(await this.store.create(commentPath(valid.task_id, valid.id), toYaml(TaskComment.shape, valid)))) {
+      throw new Error(`${commentPath(valid.task_id, valid.id)} already exists`);
+    }
+  }
+
+  async deleteComment(taskId: string, id: string) {
+    if (!isUuid(taskId) || !isUuid(id)) return false;
+    return this.store.remove(commentPath(taskId, id));
+  }
+
+  async loadSnapshotsAndComments(): Promise<SnapshotsAndComments> {
+    const problems: string[] = [];
+    const snapshotPaths = (await this.store.list(SNAPSHOTS_DIR)).filter((p) => p.endsWith(".yaml"));
+    const snapshots = await mapLimit(snapshotPaths, 16, async (p) => {
+      const text = await this.store.read(p);
+      if (text === null) return undefined;
+      try {
+        const snapshot = GithubSnapshot.parse(YAML.parse(text));
+        if (snapshotPath(snapshot.key) !== p) throw new Error(`its key ${snapshot.key} doesn't match its file name`);
+        return snapshot;
+      } catch (err) {
+        problems.push(problem(p, err));
+        return undefined;
+      }
+    });
+
+    const tasks = new Set((await this.store.list("tasks")).filter((p) => p.endsWith(".md")).map((p) => basename(p, ".md")));
+    const taskDirs = (await this.store.list(COMMENTS_DIR)).map((p) => p.split("/").pop()!).filter((id) => tasks.has(id));
+    const comments = (await mapLimit(taskDirs, 4, (taskId) => this.readComments(taskId, problems))).flat();
+
+    return {
+      snapshots: snapshots.filter((x): x is GithubSnapshot => x !== undefined).sort((a, b) => compareText(a.key, b.key)),
+      comments: comments.sort(compareComments),
+      problems,
+    };
   }
 
   private async nextNumber(dir: "users" | "api_keys") {

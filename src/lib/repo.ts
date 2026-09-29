@@ -385,6 +385,7 @@ export async function createTasks(inputs: NewTask[]): Promise<Task[]> {
       not_before: input.not_before,
       depends_on: deps[i],
       tags: input.tags ?? [],
+      prs: [],
       created: today,
       body: input.description ?? "",
     };

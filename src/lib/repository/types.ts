@@ -1,5 +1,5 @@
 import type { PlaybookVersion } from "../playbook";
-import type { ApiKey, Milestone, Project, Task, User } from "../types";
+import type { ApiKey, GithubSnapshot, Milestone, Project, Task, TaskComment, User } from "../types";
 
 /** The workspace records. Users and API keys are deliberately not included (they stay out of import/export). */
 export interface Records {
@@ -9,6 +9,19 @@ export interface Records {
   /** Every stored playbook version, pinned or not (a project can be pinned back to any of them). */
   playbooks: PlaybookVersion[];
   /** Records that couldn't be parsed; they're skipped rather than breaking everything. */
+  problems: string[];
+}
+
+/**
+ * GitHub snapshots and task comments: carried by import / export, but not part of loadAll (views read snapshots by key
+ * and comments by task).
+ */
+export interface SnapshotsAndComments {
+  /** By key. */
+  snapshots: GithubSnapshot[];
+  /** By task id, then oldest first. */
+  comments: TaskComment[];
+  /** Entries that couldn't be parsed; they're skipped rather than breaking everything. */
   problems: string[];
 }
 
@@ -48,6 +61,18 @@ export interface Repository {
   getPlaybookVersion(ref: string): Promise<PlaybookVersion | null>;
   /** Stores a new playbook version; false (nothing written) when its ref is already stored. Versions never change. */
   insertPlaybookVersion(version: PlaybookVersion): Promise<boolean>;
+  /** The snapshot stored under a key (`pr:owner/repo#123`, `repo:owner/repo`); null when there is none. */
+  getGithubSnapshot(key: string): Promise<GithubSnapshot | null>;
+  /** Stores the snapshot whole, replacing whatever was stored under its key. */
+  upsertGithubSnapshot(snapshot: GithubSnapshot): Promise<void>;
+  /** A task's comments, oldest first (ties by id); empty for an unknown task. */
+  listComments(taskId: string): Promise<TaskComment[]>;
+  /** Stores a new comment on an existing task. */
+  insertComment(comment: TaskComment): Promise<void>;
+  /** Deletes one comment of a task; false when the task has no comment with that id. */
+  deleteComment(taskId: string, id: string): Promise<boolean>;
+  /** Every snapshot and comment, for import / export. */
+  loadSnapshotsAndComments(): Promise<SnapshotsAndComments>;
   getUser(id: string): Promise<User | null>;
   /** Exact match; the caller passes an already-normalized email. */
   findUserByEmail(email: string): Promise<User | null>;
