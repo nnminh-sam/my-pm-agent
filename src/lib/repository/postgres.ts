@@ -3,8 +3,10 @@ import type { Db, Row, Statement } from "../db";
 import { PlaybookVersion } from "../playbook";
 import {
   ApiKeyMeta,
+  GithubSnapshot,
   MilestoneMeta,
   ProjectMeta,
+  TaskComment,
   TaskMeta,
   UserMeta,
   type ApiKey,
@@ -13,7 +15,7 @@ import {
   type Task,
   type User,
 } from "../types";
-import { COUNTER, type Changes, type Key, type Records, type Repository } from "./types";
+import { COUNTER, type Changes, type Key, type Records, type Repository, type SnapshotsAndComments } from "./types";
 
 type Table = "tasks" | "milestones" | "projects";
 type Entity = Task | Milestone | Project;
@@ -73,6 +75,42 @@ const insertPlaybook = (v: PlaybookVersion): Statement => ({
   text: "insert into playbook_versions (ref, name, version, hash, synced_at, definition) values ($1, $2, $3, $4, $5::timestamptz, $6::json)",
   params: [v.ref, v.name, v.version, v.hash, v.synced_at, v.definition],
 });
+const utc = (c: string) => `to_char(${col(c)} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as ${col(c)}`;
+/** Absent optional fields are NULL columns, as for the workspace tables. */
+const withoutNulls = (row: Row) => Object.fromEntries(Object.entries(row).filter(([, v]) => v !== null));
+
+/**
+ * `github_snapshots` (migrations/007_github.sql): read by key, written whole; part of import / export. Keys are ASCII,
+ * so collate "C" gives the same order as sorting them in JS.
+ */
+const SNAPSHOT_SELECT = `key, data, ${["fetched_at", "last_attempt_at", "retry_after"].map(utc).join(", ")}, last_error`;
+const SNAPSHOT_ORDER = `key collate "C"`;
+const SNAPSHOT_COLUMNS = "key, data, fetched_at, last_attempt_at, last_error, retry_after";
+const SNAPSHOT_VALUES = "$1, $2::jsonb, $3::timestamptz, $4::timestamptz, $5::jsonb, $6::timestamptz";
+// jsonb goes in as JSON text: a JS array would otherwise be sent as a Postgres array.
+const json = (value: unknown) => (value === undefined ? null : JSON.stringify(value));
+const snapshotParams = (s: GithubSnapshot) => [
+  s.key,
+  json(s.data),
+  s.fetched_at ?? null,
+  s.last_attempt_at ?? null,
+  json(s.last_error),
+  s.retry_after ?? null,
+];
+const insertSnapshot = (s: GithubSnapshot): Statement => ({
+  text: `insert into github_snapshots (${SNAPSHOT_COLUMNS}) values (${SNAPSHOT_VALUES})`,
+  params: snapshotParams(s),
+});
+const snapshotFromRow = (row: Row) => GithubSnapshot.parse(withoutNulls(row));
+
+/** `task_comments` (migrations/007_github.sql): by task, oldest first; part of import / export. */
+const COMMENT_SELECT = `id, task_id, author, ${utc("created_at")}, body`;
+const COMMENT_ORDER = "task_id, created_at, id";
+const insertComment = (c: TaskComment): Statement => ({
+  text: "insert into task_comments (id, task_id, author, created_at, body) values ($1, $2, $3, $4::timestamptz, $5)",
+  params: [c.id, c.task_id, c.author, c.created_at, c.body],
+});
+
 const problem = (where: string, err: unknown) =>
   `${where}: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`;
 
@@ -110,7 +148,7 @@ function statements(changes: Changes, build: (table: Table, entity: Entity) => S
   ];
 }
 
-export interface ImportData extends Omit<Records, "problems"> {
+export interface ImportData extends Omit<Records, "problems">, Omit<SnapshotsAndComments, "problems"> {
   settings: Record<string, unknown> | null;
 }
 
@@ -218,6 +256,59 @@ export class PgRepository implements Repository {
     return (await this.db.query(`${text} on conflict (ref) do nothing returning ref`, params)).length > 0;
   }
 
+  async getGithubSnapshot(key: string) {
+    const rows = await this.db.query(`select ${SNAPSHOT_SELECT} from github_snapshots where key = $1`, [key]);
+    return rows.length ? snapshotFromRow(rows[0]) : null;
+  }
+
+  async upsertGithubSnapshot(snapshot: GithubSnapshot) {
+    const { text, params } = insertSnapshot(snapshot);
+    const set = SNAPSHOT_COLUMNS.split(", ")
+      .filter((c) => c !== "key")
+      .map((c) => `${c} = excluded.${c}`)
+      .join(", ");
+    await this.db.query(`${text} on conflict (key) do update set ${set}`, params);
+  }
+
+  async listComments(taskId: string) {
+    if (!z.uuid().safeParse(taskId).success) return [];
+    const rows = await this.db.query(`select ${COMMENT_SELECT} from task_comments where task_id = $1 order by ${COMMENT_ORDER}`, [taskId]);
+    return rows.map((row) => TaskComment.parse(row));
+  }
+
+  async insertComment(comment: TaskComment) {
+    const { text, params } = insertComment(comment);
+    await this.db.query(text, params);
+  }
+
+  async deleteComment(taskId: string, id: string) {
+    if (!z.uuid().safeParse(taskId).success || !z.uuid().safeParse(id).success) return false;
+    const rows = await this.db.query("delete from task_comments where task_id = $1 and id = $2 returning id", [taskId, id]);
+    return rows.length > 0;
+  }
+
+  async loadSnapshotsAndComments(): Promise<SnapshotsAndComments> {
+    const problems: string[] = [];
+    const [snapshotRows, commentRows] = await Promise.all([
+      this.db.query(`select ${SNAPSHOT_SELECT} from github_snapshots order by ${SNAPSHOT_ORDER}`),
+      this.db.query(`select ${COMMENT_SELECT} from task_comments order by ${COMMENT_ORDER}`),
+    ]);
+    const parseAll = <T>(rows: Row[], parse: (row: Row) => T, where: (row: Row) => string) =>
+      rows.flatMap((row) => {
+        try {
+          return [parse(row)];
+        } catch (err) {
+          problems.push(problem(where(row), err));
+          return [];
+        }
+      });
+    return {
+      snapshots: parseAll(snapshotRows, snapshotFromRow, (row) => `github_snapshots/${row.key}`),
+      comments: parseAll(commentRows, (row) => TaskComment.parse(row), (row) => `task_comments/${row.id}`),
+      problems,
+    };
+  }
+
   async getUser(id: string) {
     const rows = await this.db.query(`select ${USER_SELECT} from users where id = $1`, [id]);
     return rows.length ? userFromRow(rows[0]) : null;
@@ -285,20 +376,29 @@ export class PgRepository implements Repository {
   /** Whether the workspace is empty; users and API keys don't count (they're never imported or replaced). */
   async isEmpty() {
     const [row] = await this.db.query(
-      "select (select count(*) from projects) + (select count(*) from milestones) + (select count(*) from tasks) + (select count(*) from playbook_versions) + (select count(*) from settings) as n",
+      `select ${["projects", "milestones", "tasks", "playbook_versions", "github_snapshots", "task_comments", "settings"]
+        .map((table) => `(select count(*) from ${table})`)
+        .join(" + ")} as n`,
     );
     return Number(row.n) === 0;
   }
 
-  /** Writes everything, counters included, in one transaction (playbook versions first, then parents first). */
+  /**
+   * Writes everything, counters included, in one transaction (playbook versions first, then parents first, then
+   * comments and snapshots).
+   */
   async importAll(data: ImportData, { replace = false } = {}) {
     const list: Statement[] = [];
     // Users and API keys are left alone: they aren't part of the transferred data.
     if (replace) {
-      for (const table of ["tasks", "milestones", "projects", "playbook_versions", "settings"]) list.push({ text: `delete from ${table}` });
+      for (const table of ["task_comments", "tasks", "milestones", "projects", "playbook_versions", "github_snapshots", "settings"]) {
+        list.push({ text: `delete from ${table}` });
+      }
     }
     list.push(...data.playbooks.map(insertPlaybook));
     list.push(...statements(data, insert));
+    list.push(...data.comments.map(insertComment));
+    list.push(...data.snapshots.map(insertSnapshot));
     if (data.settings) list.push({ text: "insert into settings (id, data) values (true, $1::json)", params: [JSON.stringify(data.settings)] });
     await this.db.transaction(list);
   }

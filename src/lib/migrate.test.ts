@@ -148,3 +148,38 @@ describe("006_lifecycle", { timeout: 30_000 }, () => {
     expect(ws.problems).toEqual([]);
   });
 });
+
+describe("007_github", { timeout: 30_000 }, () => {
+  it("gives existing tasks no PRs, and takes snapshots and comments that go with their task", async () => {
+    const { session, db, rows } = await databaseBefore("007");
+    const [project, milestone, task, other] = [newId(), newId(), newId(), newId()];
+    await session.exec(`
+      insert into projects (id, code, title, created, last_milestone_number) values ('${project}', 'PMA', 'My PM Agent', '2026-09-27', 1);
+      insert into milestones (id, code, number, title, project, created, last_task_number) values ('${milestone}', 'PMA-M1', 1, 'Auth', '${project}', '2026-09-27', 2);
+      insert into tasks (id, code, number, title, milestone, created) values
+        ('${task}', 'PMA-M1-T1', 1, 'Review', '${milestone}', '2026-09-27'),
+        ('${other}', 'PMA-M1-T2', 2, 'Other', '${milestone}', '2026-09-27');
+    `);
+    expect((await migrate(session, MIGRATIONS))[0]).toBe("007_github");
+    expect(await rows("select prs from tasks order by code")).toEqual([{ prs: [] }, { prs: [] }]);
+
+    setRepository(new PgRepository(db));
+    const ws = await repo.loadWorkspace();
+    expect(ws.tasks.map((t) => t.prs)).toEqual([[], []]);
+    expect(ws.problems).toEqual([]);
+
+    const pg = new PgRepository(db);
+    const comment = { task_id: task, author: "you" as const, created_at: "2026-09-29T01:00:00.000Z", body: "check the migration" };
+    await pg.insertComment({ id: newId(), ...comment });
+    await pg.insertComment({ id: newId(), ...comment, task_id: other });
+    await expect(pg.insertComment({ id: newId(), ...comment, task_id: newId() })).rejects.toThrow();
+    await expect(pg.insertComment({ id: newId(), ...comment, author: "bot" as "you" })).rejects.toThrow();
+    await expect(pg.insertComment({ id: newId(), ...comment, body: "" })).rejects.toThrow();
+    await expect(pg.upsertGithubSnapshot({ key: "pr:acme/api" })).rejects.toThrow();
+    await expect(pg.upsertGithubSnapshot({ key: "pr:acme/api#1", last_error: [] as unknown as Record<string, never> })).rejects.toThrow();
+
+    // Deleting a task (repo.ts never does yet) takes its comments with it.
+    await session.exec(`delete from tasks where id = '${task}'`);
+    expect(await rows("select task_id from task_comments")).toEqual([{ task_id: other }]);
+  });
+});

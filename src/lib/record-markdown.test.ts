@@ -41,6 +41,7 @@ const task = (number: number, extra: Partial<Task> = {}): Task => ({
   spent: 0,
   depends_on: [],
   tags: [],
+  prs: [],
   created: "2026-09-02",
   body: "",
   ...extra,

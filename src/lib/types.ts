@@ -38,6 +38,13 @@ export const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 /** How a project pins a playbook version: `PMA@1.2.0`. */
 export const PLAYBOOK_REF = new RegExp(`^${PLAYBOOK_NAME.source.slice(1, -1)}@${VERSION.source.slice(1, -1)}$`);
 
+/** A GitHub repository, `owner/repo`. */
+const GITHUB_REPO = "[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}";
+/** A pull request a task covers: `owner/repo#123` (repo.ts normalizes PR URLs to this). */
+export const PR_REF = new RegExp(`^${GITHUB_REPO}#[1-9]\\d*$`);
+/** A GitHub snapshot: a PR's overview (`pr:owner/repo#123`) or a repo's open-PR list (`repo:owner/repo`). */
+export const GITHUB_SNAPSHOT_KEY = new RegExp(`^(?:pr:${GITHUB_REPO}#[1-9]\\d*|repo:${GITHUB_REPO})$`);
+
 /** A check with no result is open. */
 export const CHECK_RESULTS = ["passed", "waived", "failed"] as const;
 export const CheckResult = z.object({
@@ -93,6 +100,8 @@ export const TaskMeta = z.object({
   /** Task ids. */
   depends_on: z.array(id).default([]),
   tags: z.array(z.string()).default([]),
+  /** Pull requests it covers (`owner/repo#123`); their overviews come from GitHub snapshots. */
+  prs: z.array(z.string().regex(PR_REF, "expected a pull request like owner/repo#123")).default([]),
   /** Manual rank within the same priority: lower goes first. */
   order: z.number().optional(),
   created: dateStr,
@@ -190,6 +199,47 @@ export const ApiKeyMeta = z.object({
 });
 export type ApiKeyMeta = z.infer<typeof ApiKeyMeta>;
 export type ApiKey = ApiKeyMeta;
+
+const jsonObject = z.record(z.string(), z.json());
+
+/**
+ * The last data fetched from GitHub for a key, and how the last attempt went (`github_snapshots/<key>.yaml`;
+ * `github_snapshots` table in Postgres). `data` and `fetched_at` are absent until a fetch succeeds; a failed attempt
+ * sets `last_attempt_at` / `last_error` (and `retry_after` when GitHub sent a reset time) and keeps `data`.
+ * Carried by import / export, but not part of loadAll: views read snapshots by key.
+ */
+export const GithubSnapshot = z.object({
+  key: z.string().regex(GITHUB_SNAPSHOT_KEY, "expected pr:owner/repo#123 or repo:owner/repo"),
+  /** A PR's overview, or a repo's open PRs. */
+  data: z.union([jsonObject, z.array(z.json())]).optional(),
+  /** When the last successful fetch (or webhook delivery) finished. */
+  fetched_at: datetimeStr.optional(),
+  last_attempt_at: datetimeStr.optional(),
+  /** Why the last attempt failed; absent when it succeeded. */
+  last_error: jsonObject.optional(),
+  /** Don't call GitHub for this key before then (a rate-limit reset). */
+  retry_after: datetimeStr.optional(),
+});
+export type GithubSnapshot = z.infer<typeof GithubSnapshot>;
+
+/** Who wrote a comment: you (the web UI) or an agent (MCP). */
+export const COMMENT_AUTHORS = ["you", "agent"] as const;
+export const CommentAuthor = z.enum(COMMENT_AUTHORS);
+export type CommentAuthor = z.infer<typeof CommentAuthor>;
+
+/**
+ * A plain-text note on a task (`comments/<task id>/<id>.yaml`; `task_comments` table in Postgres). Added or deleted,
+ * never edited; it goes with its task. Carried by import / export, but not part of loadAll: views read them by task.
+ */
+export const TaskComment = z.object({
+  id,
+  task_id: id,
+  author: CommentAuthor,
+  created_at: datetimeStr,
+  /** Plain text, shown as written (line breaks kept, no markdown). */
+  body: z.string().min(1),
+});
+export type TaskComment = z.infer<typeof TaskComment>;
 
 export const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
