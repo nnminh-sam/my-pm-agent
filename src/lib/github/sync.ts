@@ -85,6 +85,34 @@ const withoutUndefined = <T extends object>(o: T): T =>
   Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 
 /**
+ * The columns a failed fetch writes (Repository.recordGithubFailure), and nothing else: `data` and `fetched_at` are
+ * never part of a failure, so a failure can't undo a webhook write that landed while the fetch was in flight.
+ * `retry_after` null clears an older one.
+ */
+export interface GithubFailure {
+  last_attempt_at: string;
+  last_error: StoredGithubError;
+  retry_after: string | null;
+}
+
+export function failureOf(error: GithubError, now: Date): GithubFailure {
+  const { retry_after, ...last_error } = error;
+  return { last_attempt_at: now.toISOString(), last_error, retry_after: retry_after ?? null };
+}
+
+/** A snapshot with a failure's columns applied: what recordGithubFailure stores (none yet: a row without data). */
+export function withFailure(key: string, snapshot: GithubSnapshot | null, failure: GithubFailure): GithubSnapshot {
+  return withoutUndefined({
+    key,
+    data: snapshot?.data,
+    fetched_at: snapshot?.fetched_at,
+    last_attempt_at: failure.last_attempt_at,
+    last_error: failure.last_error,
+    retry_after: failure.retry_after ?? undefined,
+  });
+}
+
+/**
  * The snapshot after a fetch attempt at `now`:
  * - success: the new data, `fetched_at` and `last_attempt_at` set, `last_error` and `retry_after` cleared;
  * - failure: `data` and `fetched_at` kept (a failed fetch never overwrites a good snapshot), `last_attempt_at`,
@@ -98,15 +126,7 @@ export function applyFetchResult(
 ): GithubSnapshot {
   const at = now.toISOString();
   if (result.ok) return { key, data: result.data, fetched_at: at, last_attempt_at: at };
-  const { retry_after, ...error } = result.error;
-  return withoutUndefined({
-    key,
-    data: snapshot?.data,
-    fetched_at: snapshot?.fetched_at,
-    last_attempt_at: at,
-    last_error: error,
-    retry_after: retry_after ?? undefined,
-  });
+  return withFailure(key, snapshot, failureOf(result.error, now));
 }
 
 // ---- reading a snapshot ----

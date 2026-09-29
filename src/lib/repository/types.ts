@@ -1,3 +1,4 @@
+import type { GithubFailure } from "../github/sync";
 import type { PlaybookVersion } from "../playbook";
 import type { ApiKey, GithubSnapshot, Milestone, Project, Task, TaskComment, User } from "../types";
 
@@ -67,6 +68,12 @@ export interface Repository {
   getGithubSnapshot(key: string): Promise<GithubSnapshot | null>;
   /** Stores the snapshot whole, replacing whatever was stored under its key. */
   upsertGithubSnapshot(snapshot: GithubSnapshot): Promise<void>;
+  /**
+   * Records a failed fetch: writes only `last_attempt_at`, `last_error` and `retry_after` (null clears it), inserting
+   * a row without data when there is none. `data` and `fetched_at` are never touched, so a webhook write that landed
+   * during the fetch survives. Returns the snapshot as stored.
+   */
+  recordGithubFailure(key: string, failure: GithubFailure): Promise<GithubSnapshot>;
   /** A task's comments, oldest first (ties by id); empty for an unknown task. */
   listComments(taskId: string): Promise<TaskComment[]>;
   /** Stores a new comment on an existing task. */

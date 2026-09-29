@@ -15,6 +15,7 @@ import {
   type Task,
   type User,
 } from "../types";
+import type { GithubFailure } from "../github/sync";
 import { COUNTER, type Changes, type Key, type Records, type Repository, type SnapshotsAndComments } from "./types";
 
 type Table = "tasks" | "milestones" | "projects";
@@ -274,6 +275,20 @@ export class PgRepository implements Repository {
       .map((c) => `${c} = excluded.${c}`)
       .join(", ");
     await this.db.query(`${text} on conflict (key) do update set ${set}`, params);
+  }
+
+  /** One statement, column-targeted: a concurrent webhook upsert of data / fetched_at is never overwritten. */
+  async recordGithubFailure(key: string, failure: GithubFailure) {
+    const valid = GithubSnapshot.parse({ key, ...failure, retry_after: failure.retry_after ?? undefined });
+    const rows = await this.db.query(
+      `insert into github_snapshots (key, last_attempt_at, last_error, retry_after)
+       values ($1, $2::timestamptz, $3::jsonb, $4::timestamptz)
+       on conflict (key) do update set
+         last_attempt_at = excluded.last_attempt_at, last_error = excluded.last_error, retry_after = excluded.retry_after
+       returning ${SNAPSHOT_SELECT}`,
+      [valid.key, valid.last_attempt_at, json(valid.last_error), valid.retry_after ?? null],
+    );
+    return snapshotFromRow(rows[0]);
   }
 
   async listComments(taskId: string) {

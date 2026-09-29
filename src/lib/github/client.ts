@@ -13,6 +13,7 @@ import {
   type GithubResult,
   type PrOverview,
   type RepoPrItem,
+  unreadableResponse,
 } from "./overview";
 
 export { GITHUB_TIMEOUT_MS };
@@ -131,6 +132,7 @@ export async function fetchOpenPrs(repo: string, options: GithubClientOptions = 
   if (!r.token) return { ok: false, error: noToken(r) };
   const res = await call(r, `${path}/pulls?state=open&per_page=100`);
   if (!res.ok) return { ok: false, error: res.error };
-  const list = Array.isArray(res.json) ? res.json : [];
-  return { ok: true, data: list.map((p) => mapRepoPrItem(repo, p)) };
+  // A non-array would otherwise read as "no open PRs" and wipe a good list.
+  if (!Array.isArray(res.json)) return { ok: false, error: unreadableResponse() };
+  return { ok: true, data: res.json.map((p) => mapRepoPrItem(repo, p)) };
 }

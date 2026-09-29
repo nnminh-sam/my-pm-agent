@@ -1,5 +1,6 @@
 import YAML from "yaml";
 import { z } from "zod";
+import { withFailure, type GithubFailure } from "../github/sync";
 import { parseMarkdown, toMarkdown } from "../markdown";
 import { PlaybookVersion } from "../playbook";
 import type { FileStore } from "../store/types";
@@ -242,6 +243,16 @@ export class FileRepository implements Repository {
   async upsertGithubSnapshot(snapshot: GithubSnapshot) {
     const valid = GithubSnapshot.parse(snapshot);
     await this.store.write(snapshotPath(valid.key), toYaml(GithubSnapshot.shape, valid));
+  }
+
+  /**
+   * Read, merge the failure's columns, write. Not atomic across processes: the file backend is a local,
+   * single-user store, where a webhook landing between the read and the write is not a practical concern.
+   */
+  async recordGithubFailure(key: string, failure: GithubFailure) {
+    const next = GithubSnapshot.parse(withFailure(key, await this.getGithubSnapshot(key), failure));
+    await this.upsertGithubSnapshot(next);
+    return next;
   }
 
   /** Unparseable files are skipped, as they are in loadAll. */

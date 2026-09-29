@@ -10,6 +10,7 @@ import { setRepository, type Repository } from "../repository";
 import { FileRepository } from "../repository/file";
 import { PgRepository } from "../repository/postgres";
 import { FsStore } from "../store/fs";
+import type { GithubSnapshot } from "../types";
 import { pullPr, pullRepoOpenPrs, type PullOptions } from "./pull";
 import { FRESH_MS } from "./sync";
 
@@ -198,6 +199,74 @@ describe.each(backends)("pull path on the $name backend", (backend) => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("a failure after a webhook write keeps the webhook's data (failures write only their own columns)", async () => {
+    tick(FRESH_MS);
+    const key = "pr:me/app#30";
+    // The pull reads the old snapshot, then a webhook lands while GitHub is timing out.
+    await repo.upsertGithubSnapshot({ key, data: { ...pull(30), stale: true }, fetched_at: "2026-09-29T08:00:00.000Z" });
+    const webhookData = { ...(await repo.getGithubSnapshot(key))!.data, title: "From the webhook" } as Record<string, unknown>;
+    delete webhookData.stale;
+    gh.state.respond = () => {
+      throw Object.assign(new Error("aborted"), { name: "TimeoutError" });
+    };
+    const webhookAt = clock.toISOString();
+    const f = gh.f;
+    const racing: typeof fetch = async (input, init) => {
+      await repo.upsertGithubSnapshot({ key, data: webhookData as GithubSnapshot["data"], fetched_at: webhookAt });
+      return f(input, init);
+    };
+    const r = await pullPr("me/app#30", { ...opts(), client: { fetch: racing, token: TOKEN, baseUrl: "http://gh.test" } });
+    if (!r.allowed) throw new Error("refused");
+    const stored = await repo.getGithubSnapshot(key);
+    expect(stored).toMatchObject({ data: { title: "From the webhook" }, fetched_at: webhookAt, last_error: { reason: "timeout" } });
+    expect(stored?.data).not.toHaveProperty("stale");
+    // What the pull hands back is the stored row, not the one it read before fetching.
+    expect(r.snapshot).toEqual(stored);
+    expect(r.sync).toMatchObject({ sync: "out_of_sync", fetched_at: webhookAt, reason: "timeout" });
+  });
+
+  it("a malformed 2xx body is a failed fetch: old data kept, fixed message, nothing thrown", async () => {
+    tick(FRESH_MS);
+    gh.state.respond = (url) => (url.includes("/reviews") ? json([]) : json(pull(31, "Good")));
+    expect(await pullPr("me/app#31", opts())).toMatchObject({ data: { title: "Good" }, sync: { sync: "synced" } });
+    const good = await repo.getGithubSnapshot("pr:me/app#31");
+
+    for (const body of [{}, { number: "x" }, null, "text"]) {
+      tick(FRESH_MS);
+      gh.state.respond = (url) => (url.includes("/reviews") ? json([]) : json(body));
+      const r = await pullPr("me/app#31", opts());
+      expect(r).toMatchObject({ allowed: true, data: { title: "Good" }, sync: { sync: "out_of_sync", reason: "github_down" } });
+      if (!r.allowed) return;
+      expect(r.sync.error?.message).toBe("GitHub sent a response my_pm couldn't read");
+      expect(await repo.getGithubSnapshot("pr:me/app#31")).toMatchObject({ data: good!.data, fetched_at: good!.fetched_at });
+    }
+
+    // The repo list: a non-array or an item that doesn't map keeps the stored list.
+    tick(FRESH_MS);
+    gh.state.respond = () => json([pull(31)]);
+    expect(await pullRepoOpenPrs("me/app", opts())).toMatchObject({ sync: { sync: "synced" } });
+    for (const body of [{}, [{}], [pull(31), { number: null }]]) {
+      tick(FRESH_MS);
+      gh.state.respond = () => json(body);
+      const r = await pullRepoOpenPrs("me/app", opts());
+      expect(r).toMatchObject({ sync: { sync: "out_of_sync", reason: "github_down" } });
+      expect(r.allowed && r.data?.map((p) => p.number)).toEqual([31]);
+    }
+  });
+
+  it("recordGithubFailure: inserts a data-less row, then updates only the failure columns", async () => {
+    const key = "pr:me/app#32";
+    const error = { reason: "rate_limited" as const, status: 429, message: "slow down", request_id: "R1" };
+    const first = await repo.recordGithubFailure(key, { last_attempt_at: "2026-09-29T10:00:00Z", last_error: error, retry_after: "2026-09-29T10:30:00Z" });
+    expect(first).toEqual({ key, last_attempt_at: "2026-09-29T10:00:00.000Z", last_error: error, retry_after: "2026-09-29T10:30:00.000Z" });
+    await repo.upsertGithubSnapshot({ ...first, data: { number: 32 }, fetched_at: "2026-09-29T10:40:00.000Z" });
+    const down = { reason: "github_down" as const, status: 503, message: "down", request_id: null };
+    const second = await repo.recordGithubFailure(key, { last_attempt_at: "2026-09-29T10:45:00.000Z", last_error: down, retry_after: null });
+    expect(second).toEqual({ key, data: { number: 32 }, fetched_at: "2026-09-29T10:40:00.000Z", last_attempt_at: "2026-09-29T10:45:00.000Z", last_error: down });
+    expect(await repo.getGithubSnapshot(key)).toEqual(second);
+    await expect(repo.recordGithubFailure("pr:not a key", { last_attempt_at: "2026-09-29T10:45:00.000Z", last_error: down, retry_after: null })).rejects.toThrow();
   });
 
   it("checks the link when reading: a repo moved to a company project stops being fetched", async () => {
