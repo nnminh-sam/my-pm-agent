@@ -611,6 +611,108 @@ export function normalizeRepo(remote: string): string {
   return s;
 }
 
+/**
+ * Normalizes a GitHub PR reference to `owner/repo#number` format.
+ * Accepts full PR URLs (https://github.com/owner/repo/pull/123) and short form (owner/repo#123).
+ * Uses normalizeRepo to validate the owner/repo component and ensure it resolves to github.com.
+ * Rejects non-github.com hosts, issues URLs, missing or zero PR numbers, non-HTTP(S) schemes, ports, and junk.
+ * Number must be a positive integer with 1–9 digits, no leading zeros.
+ */
+export function normalizePr(prRef: string): string {
+  const s = prRef.trim();
+  if (!s) throw new Error("PR reference cannot be empty");
+
+  let ownerRepo: string;
+  let number: string;
+
+  // Try short form: owner/repo#123 (1–9 digit number, no leading zeros)
+  const shortMatch = /^([^#\s]+)#([1-9]\d{0,8})$/.exec(s);
+  if (shortMatch) {
+    [, ownerRepo, number] = shortMatch;
+    // Validate it looks like owner/repo (exactly 2 segments separated by slash)
+    const segments = ownerRepo.split("/");
+    if (segments.length !== 2 || !segments[0] || !segments[1]) {
+      throw new Error(`Invalid owner/repo format in PR reference "${prRef}" (must be owner/repo, got "${ownerRepo}")`);
+    }
+  } else {
+    // Parse URL form using URL constructor for strict validation
+    let u = s;
+
+    // If no scheme, add https:// for parsing; reject if it looks like a non-HTTP(S) scheme or user@host
+    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(u);
+    const hasOtherScheme = /^[a-z][a-z0-9+.-]*:/i.test(u);
+    const hasUserinfo = /^[^@/]+@/.test(u);
+
+    if (!hasScheme && hasOtherScheme) {
+      throw new Error(`Only HTTP/HTTPS PR URLs are supported (got "${prRef}")`);
+    }
+
+    if (!hasScheme && !hasUserinfo) {
+      u = `https://${u}`;
+    }
+
+    // Parse as URL to get strict validation
+    let url: URL;
+    try {
+      url = new URL(u);
+    } catch {
+      throw new Error(`Invalid PR URL format for "${prRef}"`);
+    }
+
+    // Validate protocol is HTTP or HTTPS
+    if (!/^https?:$/.test(url.protocol)) {
+      throw new Error(`Only HTTP/HTTPS PR URLs are supported (got "${prRef}")`);
+    }
+
+    // Validate host is exactly github.com or www.github.com (case-insensitive)
+    const hostname = url.hostname.toLowerCase();
+    if (hostname !== "github.com" && hostname !== "www.github.com") {
+      throw new Error(`Only GitHub PRs are supported (got "${prRef}")`);
+    }
+
+    // Reject any port
+    if (url.port) {
+      throw new Error(`Port numbers are not supported in PR URLs (got "${prRef}")`);
+    }
+
+    // Extract pathname and validate format exactly: /owner/repo/pull/number[/extra]
+    const pathname = url.pathname;
+    const prMatch = /^\/([a-zA-Z0-9._-]{1,39})\/([a-zA-Z0-9._-]{1,100})\/pull\/([1-9]\d{0,8})(?:\/.*)?$/.exec(
+      pathname
+    );
+
+    if (!prMatch) {
+      // Better error if it's an issues URL
+      if (/\/issues\//i.test(pathname)) {
+        throw new Error(`GitHub issues are not supported, only pull requests`);
+      }
+      throw new Error(`Invalid PR URL format for "${prRef}"`);
+    }
+
+    const [, owner, repo, num] = prMatch;
+    ownerRepo = `${owner}/${repo}`;
+    number = num;
+  }
+
+  // Validate and normalize owner/repo by treating as a github.com remote
+  // This ensures the format is valid and leverages normalizeRepo's validation
+  try {
+    const fullRemote = `github.com/${ownerRepo}`;
+    const normalized = normalizeRepo(fullRemote);
+    // Extract owner/repo from normalized form
+    // normalized should be github.com/owner/repo (lowercase)
+    const match = /^github\.com\/([a-z0-9-]{1,39}\/[a-z0-9._-]{1,100})$/.exec(normalized);
+    if (!match) {
+      throw new Error("Validation failed");
+    }
+    ownerRepo = match[1];
+  } catch {
+    throw new Error(`Invalid owner/repo format in PR reference "${prRef}"`);
+  }
+
+  return `${ownerRepo}#${number}`;
+}
+
 const normalizeRepos = (repos: string[]) => [...new Set(repos.map(normalizeRepo))];
 
 /** A repo belongs to one project, so a session in it always finds the same one. */

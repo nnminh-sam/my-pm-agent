@@ -831,6 +831,146 @@ describe("normalizeRepo", () => {
   });
 });
 
+describe("normalizePr", () => {
+  it("accepts short form owner/repo#number", () => {
+    expect(repo.normalizePr("owner/repo#123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("Owner/Repo#456")).toBe("owner/repo#456");
+    expect(repo.normalizePr("my-owner/my-repo#1")).toBe("my-owner/my-repo#1");
+    expect(repo.normalizePr("  owner/repo#789  \n")).toBe("owner/repo#789");
+  });
+
+  it("accepts full GitHub PR URLs with various schemes and formats", () => {
+    for (const url of [
+      "https://github.com/owner/repo/pull/123",
+      "https://github.com/Owner/Repo/pull/456",
+      "http://github.com/owner/repo/pull/789",
+      "github.com/owner/repo/pull/123",
+      "www.github.com/owner/repo/pull/456",
+      "https://www.github.com/owner/repo/pull/789",
+    ]) {
+      expect(repo.normalizePr(url)).toMatch(/^owner\/repo#\d+$/);
+    }
+  });
+
+  it("handles PR URLs with trailing paths, query strings, and fragments", () => {
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123/files")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123/commits")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123?tab=files")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123#discussion_123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123/")).toBe("owner/repo#123");
+  });
+
+  it("handles user credentials in URLs", () => {
+    expect(repo.normalizePr("https://user:password@github.com/owner/repo/pull/123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://token@github.com/owner/repo/pull/123")).toBe("owner/repo#123");
+  });
+
+  it("lowercases owner/repo but preserves number", () => {
+    expect(repo.normalizePr("Owner/Repo#123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/MyOwner/MyRepo/pull/999")).toBe("myowner/myrepo#999");
+  });
+
+  it("handles uppercase scheme and host", () => {
+    expect(repo.normalizePr("HTTPS://GITHUB.COM/owner/repo/pull/123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://GitHub.Com/owner/repo/pull/456")).toBe("owner/repo#456");
+    expect(repo.normalizePr("HTTP://github.com/owner/repo/pull/789")).toBe("owner/repo#789");
+  });
+
+  it("handles .git suffix in short form (normalizeRepo strips it)", () => {
+    expect(repo.normalizePr("owner/repo.git#123")).toBe("owner/repo#123");
+  });
+
+  it("rejects empty strings", () => {
+    expect(() => repo.normalizePr("")).toThrow("cannot be empty");
+    expect(() => repo.normalizePr("  \n  ")).toThrow("cannot be empty");
+  });
+
+  it("rejects non-numeric PR numbers", () => {
+    expect(() => repo.normalizePr("owner/repo#abc")).toThrow();
+    expect(() => repo.normalizePr("owner/repo#")).toThrow();
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull/abc")).toThrow();
+  });
+
+  it("rejects PR numbers with leading zeros", () => {
+    expect(() => repo.normalizePr("owner/repo#0123")).toThrow();
+    expect(() => repo.normalizePr("owner/repo#00")).toThrow();
+  });
+
+  it("rejects PR number zero", () => {
+    expect(() => repo.normalizePr("owner/repo#0")).toThrow();
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull/0")).toThrow();
+  });
+
+  it("rejects PR numbers longer than 9 digits", () => {
+    expect(() => repo.normalizePr("owner/repo#1234567890")).toThrow();
+    expect(() => repo.normalizePr("owner/repo#9999999999")).toThrow();
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull/1234567890")).toThrow();
+  });
+
+  it("rejects GitHub issues (not pull requests)", () => {
+    expect(() => repo.normalizePr("https://github.com/owner/repo/issues/123")).toThrow(/issues/);
+    expect(() => repo.normalizePr("https://github.com/owner/repo/issues/456/")).toThrow(/issues/);
+  });
+
+  it("rejects /pulls/ instead of /pull/", () => {
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pulls/123")).toThrow();
+  });
+
+  it("rejects non-github.com hosts", () => {
+    expect(() => repo.normalizePr("https://gitlab.com/owner/repo/pull/123")).toThrow(/GitHub/);
+    expect(() => repo.normalizePr("https://github.example.com/owner/repo/pull/123")).toThrow(/GitHub/);
+    expect(() => repo.normalizePr("https://github.com.evil.com/owner/repo/pull/123")).toThrow(/GitHub/);
+    expect(() => repo.normalizePr("https://bitbucket.org/owner/repo/pull/123")).toThrow(/GitHub/);
+  });
+
+  it("rejects host smuggling via query string (?@)", () => {
+    expect(() => repo.normalizePr("https://evil.com?x=@github.com/a/b/pull/1")).toThrow();
+  });
+
+  it("rejects host smuggling via fragment (#@)", () => {
+    expect(() => repo.normalizePr("https://evil.com#@github.com/a/b/pull/1")).toThrow();
+  });
+
+  it("rejects ports", () => {
+    expect(() => repo.normalizePr("https://github.com:8080/owner/repo/pull/123")).toThrow(/port/i);
+    expect(() => repo.normalizePr("github.com:2222/owner/repo/pull/123")).toThrow();
+  });
+
+  it("rejects non-HTTP(S) schemes", () => {
+    expect(() => repo.normalizePr("ssh://git@github.com/owner/repo/pull/123")).toThrow(/HTTP/);
+    expect(() => repo.normalizePr("git://github.com/owner/repo/pull/123")).toThrow(/HTTP/);
+    expect(() => repo.normalizePr("ftp://github.com/owner/repo/pull/123")).toThrow(/HTTP/);
+  });
+
+  it("rejects extra path segments before /pull/", () => {
+    expect(() => repo.normalizePr("https://github.com/x/a/b/pull/1")).toThrow(); // 3 segments instead of 2
+    expect(() => repo.normalizePr("https://github.com/a/b/blob/x/pull/1")).toThrow(); // /blob/ before /pull/
+  });
+
+  it("rejects malformed PR path numbers (pull/1abc)", () => {
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull/1abc")).toThrow();
+    expect(() => repo.normalizePr("owner/repo#1abc")).toThrow();
+  });
+
+  it("rejects multiple hash symbols", () => {
+    expect(() => repo.normalizePr("a/b#1#2")).toThrow(); // only first # counts in regex
+    // Technically this might match as a/b#1 due to regex, let's verify
+  });
+
+  it("rejects invalid owner/repo formats", () => {
+    expect(() => repo.normalizePr("owner#123")).toThrow(); // missing repo
+    expect(() => repo.normalizePr("owner/repo/extra#123")).toThrow(); // too many segments
+    expect(() => repo.normalizePr("https://github.com/owner/repo")).toThrow(); // missing /pull/number
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull")).toThrow(); // missing number
+  });
+
+  it("rejects junk input", () => {
+    expect(() => repo.normalizePr("not a pr")).toThrow();
+    expect(() => repo.normalizePr("owner/repo/pull/123")).toThrow(); // missing github.com
+    expect(() => repo.normalizePr("random text #123")).toThrow();
+  });
+});
+
 describe("email helpers", () => {
   it("normalizes and validates", () => {
     expect(repo.normalizeEmail("  Me@Example.COM\n")).toBe("me@example.com");

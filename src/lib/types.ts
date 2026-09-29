@@ -38,12 +38,12 @@ export const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 /** How a project pins a playbook version: `PMA@1.2.0`. */
 export const PLAYBOOK_REF = new RegExp(`^${PLAYBOOK_NAME.source.slice(1, -1)}@${VERSION.source.slice(1, -1)}$`);
 
-/** A GitHub repository, `owner/repo`. */
-const GITHUB_REPO = "[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}";
-/** A pull request a task covers: `owner/repo#123` (repo.ts normalizes PR URLs to this). */
-export const PR_REF = new RegExp(`^${GITHUB_REPO}#[1-9]\\d*$`);
-/** A GitHub snapshot: a PR's overview (`pr:owner/repo#123`) or a repo's open-PR list (`repo:owner/repo`). */
-export const GITHUB_SNAPSHOT_KEY = new RegExp(`^(?:pr:${GITHUB_REPO}#[1-9]\\d*|repo:${GITHUB_REPO})$`);
+/** A GitHub repository in normalized (lowercase) form, `owner/repo`. */
+const GITHUB_REPO_NORMALIZED = "[a-z0-9-]{1,39}/[a-z0-9._-]{1,100}";
+/** A pull request a task covers: `owner/repo#123` (normalized to lowercase by normalizePr). */
+export const PR_REF = new RegExp(`^${GITHUB_REPO_NORMALIZED}#[1-9]\\d*$`);
+/** A GitHub snapshot: a PR's overview (`pr:owner/repo#123`) or a repo's open-PR list (`repo:owner/repo`), normalized to lowercase. */
+export const GITHUB_SNAPSHOT_KEY = new RegExp(`^(?:pr:${GITHUB_REPO_NORMALIZED}#[1-9]\\d*|repo:${GITHUB_REPO_NORMALIZED})$`);
 
 /** A check with no result is open. */
 export const CHECK_RESULTS = ["passed", "waived", "failed"] as const;
