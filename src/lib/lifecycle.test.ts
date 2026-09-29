@@ -185,13 +185,15 @@ describe("across projects", () => {
     const a = project("AAA", { priority: "P1", playbook: "PMA@1.0.0" });
     const b = project("BBB", { playbook: "PMA@1.0.0" });
     const held = project("CCC", { status: "on_hold", playbook: "PMA@1.0.0" });
+    // Each spec milestone gets its own failure note, so no two share an action (those are listed once; see below).
+    const spec = (note: string) => ({ stage: "spec" as const, checks: { "spec.accepted": { status: "failed" as const, at: "2026-09-20", note } } });
     const milestones = [
-      milestone(b, 1, { stage: "spec" }),
+      milestone(b, 1, spec("b1")),
       milestone(b, 2, { stage: "verify" }),
-      milestone(b, 3, { stage: "spec", deadline: "2026-10-10" }),
-      milestone(b, 4, { stage: "spec", deadline: "2026-10-05" }),
-      milestone(b, 5, { stage: "spec" }),
-      milestone(a, 1, { stage: "spec" }),
+      milestone(b, 3, { ...spec("b3"), deadline: "2026-10-10" }),
+      milestone(b, 4, { ...spec("b4"), deadline: "2026-10-05" }),
+      milestone(b, 5, spec("b5")),
+      milestone(a, 1, spec("a1")),
       milestone(b, 6, { stage: "idea" }),
       milestone(b, 7, { stage: "verify", status: "done" }),
       milestone(held, 1, { stage: "release" }),
@@ -227,6 +229,23 @@ describe("across projects", () => {
     ]);
     expect(views.map((p) => p.code)).toEqual(["LAYER", "PMA"]);
     expect(views[1]).toMatchObject({ playbook: "PMA@1.0.0", environments: ["dev", "prod"] });
+  });
+
+  it("lists the same step for several milestones once", () => {
+    const pma = project("PMA", { detectors: ["migrations"] });
+    const other = project("OTHER", { playbook: "PMA@1.0.0" });
+    const dev = { dev: { at: "2026-09-27" } };
+    const milestones = [
+      ...[1, 2, 3].map((n) => milestone(pma, n, { stage: "release", deployments: dev })),
+      milestone(pma, 4, { stage: "release" }),
+      milestone(other, 1, { stage: "release", deployments: dev }),
+    ];
+    const { next } = run({ projects: [pma, other], milestones });
+    expect(next.map((n) => [n.milestone, n.with, n.action.text])).toEqual([
+      ["OTHER-M1", undefined, "release.rollback_plan (prod): Rollback point recorded before the deploy"],
+      ["PMA-M1", ["PMA-M2", "PMA-M3"], "release.rollback_plan (prod): Rollback point recorded before the deploy"],
+      ["PMA-M4", undefined, "Deploy to dev and record it"],
+    ]);
   });
 
   it("flags too many milestones in build at once", () => {

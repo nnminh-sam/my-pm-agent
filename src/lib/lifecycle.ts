@@ -101,6 +101,8 @@ export interface RankedAction {
   at_risk: boolean;
   action: NextAction;
   open: string[];
+  /** Other milestones of the project in the same stage with the very same next action (one prod cut-over releases them all). */
+  with?: string[];
 }
 
 export interface LifecycleResult {
@@ -108,7 +110,7 @@ export interface LifecycleResult {
   projects: ProjectLifecycle[];
   /** Every warning, for all active projects (including those without a playbook). */
   warnings: LifecycleWarning[];
-  /** What to do next, most important first. Ideas and finished milestones aren't listed. */
+  /** What to do next, most important first; one entry per distinct action. Ideas and finished milestones aren't listed. */
   next: RankedAction[];
   wip: { in_build: string[]; limit: number; over: boolean };
 }
@@ -417,6 +419,18 @@ export function lifecycle({ projects, milestones, tasks, playbooks, settings, pl
       compareDeadlines(a.deadline, b.deadline) ||
       compareCodes(a.milestone, b.milestone),
   );
+  // One entry per action: the same step for the same project and stage is done once, for all of them.
+  const grouped: RankedAction[] = [];
+  for (const item of result.next) {
+    const same = grouped.find((g) => g.project === item.project && g.stage === item.stage && sameAction(g.action, item.action));
+    if (same) same.with = [...(same.with ?? []), item.milestone];
+    else grouped.push(item);
+  }
+  result.next = grouped;
   result.wip.over = result.wip.in_build.length > WIP_LIMIT;
   return result;
+}
+
+function sameAction(a: NextAction, b: NextAction) {
+  return a.kind === b.kind && a.text === b.text && ("check" in a ? a.check : undefined) === ("check" in b ? b.check : undefined);
 }
