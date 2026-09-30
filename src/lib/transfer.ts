@@ -5,10 +5,17 @@ import type { Repository } from "./repository";
 import type { FileRepository } from "./repository/file";
 import type { PgRepository } from "./repository/postgres";
 
-/** Workspace data only: users (accounts, password hashes) are intentionally never imported, exported or compared. */
+/**
+ * Workspace data, GitHub snapshots and task comments. Users (accounts, password hashes) and API keys are
+ * intentionally never imported, exported or compared.
+ */
 export async function readAll(source: Repository) {
-  const [settings, records] = await Promise.all([source.readSettings(), source.loadAll()]);
-  return { settings, ...records };
+  const [settings, records, { snapshots, comments, problems }] = await Promise.all([
+    source.readSettings(),
+    source.loadAll(),
+    source.loadSnapshotsAndComments(),
+  ]);
+  return { settings, ...records, snapshots, comments, problems: [...records.problems, ...problems] };
 }
 
 /** Copies everything from `source` into Postgres in one transaction. */
@@ -28,6 +35,8 @@ export async function exportTo(target: FileRepository, source: Repository) {
   if (data.settings) await target.writeSettings(data.settings);
   for (const version of data.playbooks) await target.insertPlaybookVersion(version);
   await target.insert(data);
+  for (const comment of data.comments) await target.insertComment(comment);
+  for (const snapshot of data.snapshots) await target.upsertGithubSnapshot(snapshot);
   return data;
 }
 
@@ -46,9 +55,17 @@ function diffRecords(kind: string, a: { id: string }[], b: { id: string }[]) {
   return diffs;
 }
 
-/** Loads the workspace and schedule through both backends and lists every difference (empty = identical). */
+/**
+ * Loads the workspace and schedule, snapshots and comments through both backends and lists every difference
+ * (empty = identical).
+ */
 export async function compareBackends(a: Repository, b: Repository, at = new Date()): Promise<string[]> {
-  const [wa, wb] = await Promise.all([loadWorkspace(a), loadWorkspace(b)]);
+  const [wa, wb, ga, gb] = await Promise.all([
+    loadWorkspace(a),
+    loadWorkspace(b),
+    a.loadSnapshotsAndComments(),
+    b.loadSnapshotsAndComments(),
+  ]);
   const diffs = [
     ...(isDeepStrictEqual(wa.settings, wb.settings) ? [] : ["settings differ"]),
     ...diffRecords("project", wa.projects, wb.projects),
@@ -59,7 +76,13 @@ export async function compareBackends(a: Repository, b: Repository, at = new Dat
       wa.playbooks.map((v) => ({ id: v.ref, ...v })),
       wb.playbooks.map((v) => ({ id: v.ref, ...v })),
     ),
-    ...(isDeepStrictEqual(wa.problems, wb.problems) ? [] : ["problems differ"]),
+    ...diffRecords(
+      "snapshot",
+      ga.snapshots.map((s) => ({ id: s.key, ...s })),
+      gb.snapshots.map((s) => ({ id: s.key, ...s })),
+    ),
+    ...diffRecords("comment", ga.comments, gb.comments),
+    ...(isDeepStrictEqual(wa.problems, wb.problems) && isDeepStrictEqual(ga.problems, gb.problems) ? [] : ["problems differ"]),
   ];
   if (!isDeepStrictEqual(scheduleFor(wa, at), scheduleFor(wb, at))) diffs.push("schedule differs");
   return diffs;

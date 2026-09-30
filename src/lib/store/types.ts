@@ -7,4 +7,6 @@ export interface FileStore {
   write(path: string, content: string): Promise<void>;
   /** Write only if the path doesn't exist yet. Returns false on conflict. */
   create(path: string, content: string): Promise<boolean>;
+  /** Delete a file. Returns false when there was none. */
+  remove(path: string): Promise<boolean>;
 }

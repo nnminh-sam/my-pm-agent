@@ -196,7 +196,8 @@ To adopt a playbook, store it and then pin it. Store it with `sync_playbook`, or
 | `get_overview` | Today's plan, milestones with progress and projected finish, risks, settings |
 | `list_tasks` / `get_task` | Browse tasks with their scheduled slot |
 | `create_tasks` | Create many tasks in one call; `ref`s let tasks depend on each other in the same batch |
-| `update_task` | Status, priority, estimate or `pert`, deadline, dependencies, order, notes; `milestone` moves it |
+| `update_task` | Status, priority, estimate or `pert`, deadline, dependencies, order, notes, `prs`; `milestone` moves it |
+| `add_comment` | Append a plain-text comment to a task (author `agent`) |
 | `log_time` | Add hours worked; `done=true` completes the task |
 | `reorder_tasks` | Manual order within a priority |
 | `list_projects` / `get_project` / `create_project` / `update_project` | Projects: code, goal, rollup across milestones, on-hold |
@@ -221,7 +222,7 @@ Every code in the web UI (page headings, task lists) has a copy icon next to it.
 
 | Record | Editable fields |
 | --- | --- |
-| Task | `title`, `status`, `priority`, `milestone`, `estimate`, `deadline`, `not_before`, `depends_on`, `tags` |
+| Task | `title`, `status`, `priority`, `milestone`, `estimate`, `deadline`, `not_before`, `depends_on`, `tags`, `prs` |
 | Milestone | `title`, `status`, `project`, `priority`, `deadline` |
 | Project | `code`, `title`, `status`, `priority`, `deadline` |
 
@@ -230,6 +231,78 @@ Every code in the web UI (page headings, task lists) has a copy icon next to it.
 - Removing a key clears it: `priority` → inherit, `deadline`, `not_before`, and lists become empty. Required fields (`title`, `status`, the parent, a project's `code` and `priority`) and `estimate` can't be removed. A changed `estimate` replaces a three-point range.
 - Changing a project's `code` renames its milestones and tasks; moving a task or milestone gives it the next number in its new parent. The page follows to the new URL.
 - If the record changed elsewhere (say, an agent updated it) since the editor opened, the save is refused with "changed elsewhere": copy your edits, reload and apply them again.
+
+## GitHub integration
+
+A task can reference pull requests, and my_pm shows each one's **overview**: title, body, state (open, draft, merged, closed), GitHub milestone, branches, author, assignees, and reviewers with their latest state (approved, changes requested, commented, pending). It never shows diffs, files, commits or review text; use `gh` for those. Company projects never contact GitHub: they take no PR references and show no PR section (a PR stored before a project became company is hidden).
+
+### Linking repos and PRs
+
+- **Repos:** link `owner/repo` on the project page (Repositories), or with `update_project` `repos`. Only linked repos of personal projects are ever read.
+- **PRs:** set a task's `prs` in the record editor (`prs:` list) or with `update_task`, as a URL or `owner/repo#N` (stored as `owner/repo#N`). The list replaces the old one, and `[]` clears it. It is rejected when the PR's repo isn't linked to the task's project, or the project is a company project.
+- **Where it shows:** the task page (overview and sync badge), a chip on task rows (`PR #11 · merged`), the project page (open PRs per linked repo), and `get_task` (`pull_requests`).
+
+### Token (`GITHUB_TOKEN`)
+
+Create a **fine-grained personal access token** at GitHub → Settings → Developer settings:
+
+- **Repository access:** only the linked repos (add each repo you link later).
+- **Permissions:** **Pull requests: Read-only** and **Metadata: Read-only**. Nothing else.
+
+Set it as `GITHUB_TOKEN` in `.env.local`, and on Vercel as a **Sensitive** environment variable (Production, and Preview if used), then redeploy. The token stays on the server: it is never sent to the browser or included in MCP output, and error text is redacted before it is stored. Without it, PRs show "Token invalid or expired". `GITHUB_API_URL` is optional (default `https://api.github.com`); point it at a mock to test, or at a dead address (`http://127.0.0.1:9`) to simulate an outage.
+
+### How syncing works
+
+my_pm keeps a **snapshot** per PR (and per linked repo, for the open-PR list) in the store. Opening a task or project page refreshes a snapshot that is older than **60 seconds**; a fresh one is used as is. Task lists, chips and `get_task` read snapshots only and never call GitHub. A failed fetch never overwrites a good snapshot: it records the failure, and the badge says so.
+
+### Webhook (optional, keeps snapshots current)
+
+Without it, snapshots refresh on page views. With it, merges and reviews show up straight away, without a GitHub call. It needs a publicly reachable deployment whose database has migration 007.
+
+1. Set `GITHUB_WEBHOOK_SECRET` (`openssl rand -hex 32`) on the deployment.
+2. In the repo: Settings → Webhooks → Add webhook.
+   - **Payload URL:** `https://<your-app>.vercel.app/api/github/webhook`
+   - **Content type:** `application/json` (a form-encoded body gets 400)
+   - **Secret:** the same value as `GITHUB_WEBHOOK_SECRET`
+   - **Events:** "Let me select individual events": **Pull requests** and **Pull request reviews**
+3. GitHub sends a `ping`; Recent Deliveries should show **204**. A **401** means the secret doesn't match (or isn't set on the deployment).
+
+The route is open to the internet, and the HMAC signature is its only authentication. Events for unlinked or company repos, and other event types, get 204 and change nothing. GitHub doesn't retry failed deliveries: a missed one is corrected by the next page view after 60s, or use Redeliver.
+
+### Sync badge
+
+Each PR on a task page has a badge:
+
+| Badge | Meaning |
+| --- | --- |
+| `synced 2m ago` | Snapshot from the last successful fetch or webhook |
+| `Out of sync · last synced 14m ago` | The last attempt failed; the older snapshot is still shown |
+| `Never synced` | No successful fetch yet; only the link to GitHub is shown |
+
+Anything but "synced" opens a details panel: the reason, HTTP status, GitHub's message, request id, last attempt, and **Retry now** (which skips the 60s window). Reasons:
+
+| Reason | Wording |
+| --- | --- |
+| `github_down` | GitHub is unavailable |
+| `timeout` | GitHub didn't respond in time |
+| `bad_token` | Token invalid or expired |
+| `no_access` | Repo renamed, deleted or not granted to the token |
+| `rate_limited` | Rate-limited until `<UTC time>` |
+| `not_linked` | Repo isn't linked to this project |
+| `company` | Company projects don't read GitHub |
+
+On a rate limit, `retry_after` is taken from GitHub's headers (capped at 1 hour, default 60s). Nothing calls GitHub for that PR or repo before then, Retry now included. The limit is tracked per PR or repo key, so opening a different PR can still make its own call. `get_task` returns `sync` as `{sync, fetched_at, reason}` plus `message` and `retry_after` when they apply.
+
+### Known limits
+
+- Requested *teams* aren't shown, only requested people.
+- Only the first 100 reviews of a PR are read, and the open-PR list is capped at 100.
+- Badge times are UTC, not the settings timezone.
+- Raw HTML in a PR body is shown as escaped text, not rendered.
+
+### Task comments
+
+Every task (on any project, company ones included) has a comment log: plain text, append-only, newest at the bottom. Author is `you` (web) or `agent` (MCP). Add and delete on the task page; agents call `add_comment`, and `get_task` returns the comments oldest first. Comments are not markdown, and my_pm never resolves references in them (a PR link or task code stays text). Over MCP there is no edit or delete.
 
 ## Auth
 
@@ -335,6 +408,8 @@ src/lib/store/           file store for the markdown backend (local fs)
 src/lib/db.ts            Neon clients (pooled for the app, unpooled for scripts)
 migrations/              SQL schema, applied by `npm run db:migrate`
 scripts/                 db:smoke, db:migrate, db:import, db:export, auth:*-key(s)
+src/lib/github/          GitHub: client (server-only), overview/sync/webhook (pure), pull (page-open sync), views
+src/app/api/github/webhook/  GitHub webhook (HMAC-authenticated)
 src/lib/mcp/             MCP tools, prompts, server instructions
 src/app/api/mcp/         MCP endpoint (+ WebMCP bridge script)
 src/app/api/playbooks/   POST a compiled playbook version (what pm-flow calls)

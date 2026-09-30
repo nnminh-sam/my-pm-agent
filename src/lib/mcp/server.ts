@@ -13,6 +13,8 @@ import {
   TaskPatch,
   createMilestone,
   createProject,
+  addComment,
+  listComments,
   advanceStage,
   createTasks,
   getMilestone,
@@ -38,6 +40,7 @@ import { nowIn } from "../time";
 import { LIFECYCLE_STAGES, LifecycleStage, SettingsPatch, TaskStatus, type Milestone, type Project, type Task } from "../types";
 import { CHECKIN_PROMPT, REPLAN_PROMPT, breakdownPrompt, estimatePrompt, projectBreakdownPrompt, workOnTaskPrompt } from "./prompts";
 import { taskContext } from "./task-context";
+import { taskGithub } from "./task-github";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -75,6 +78,7 @@ function taskRow(t: Task, ws: Workspace, plan?: ScheduleResult) {
     not_before: t.not_before,
     depends_on: t.depends_on.length ? t.depends_on.map(code) : undefined,
     tags: t.tags.length ? t.tags : undefined,
+    prs: t.prs.length ? t.prs : undefined,
     order: t.order,
     scheduled: slot ? `${slot.start.date} ${slot.start.time} → ${slot.end.date} ${slot.end.time}` : undefined,
     late_days: slot?.late_days || undefined,
@@ -217,19 +221,24 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Get task",
       description:
-        "A task's full details, including its markdown description, log and scheduled slot, plus what's needed to start on it: milestone_context (code, title, status, spec), project_context (code, title) and dependencies (code, title, status).",
+        "A task's full details, including its markdown description, log and scheduled slot, plus what's needed to start on it: milestone_context (code, title, status, spec), project_context (code, title) and dependencies (code, title, status). Also comments (oldest first: id, author, created_at, body) and, when the task has PRs, pull_requests: per PR its ref, url, overview (title, body, state, GitHub milestone, reviewers with states, assignees) and sync ({sync: synced | out_of_sync | never, fetched_at, reason}, plus message and retry_after when the last attempt failed or GitHub rate-limited). Both come from stored snapshots and never call GitHub (a PR whose repo is no longer linked to a personal project shows no overview, reason not_linked); for the diff or review threads use `gh`.",
       inputSchema: z.object({ id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id).") }),
       annotations: READ,
     },
     async ({ id }) =>
       run(async () => {
         const [task, ws] = await Promise.all([getTask(id), loadWorkspace()]);
+        const [comments, pull_requests] = await Promise.all([listComments(task.id), taskGithub(task, ws)]);
         return json({
           ...taskRow(task, ws, scheduleFor(ws)),
           created: task.created,
           completed: task.completed,
           description: task.body,
           ...taskContext(task, ws),
+          pull_requests,
+          comments: comments.length
+            ? comments.map((c) => ({ id: c.id, author: c.author, created_at: c.created_at, body: c.body }))
+            : undefined,
         });
       }),
   );
@@ -260,7 +269,7 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Update task",
       description:
-        "Change any task field — status, priority, estimate (or pert), deadline, not_before, depends_on, order, tags, description, milestone (moves it: the code changes) — or append a note. Nullable fields accept null to clear them. Returns the task's new slot and the effect on the schedule.",
+        "Change any task field — status, priority, estimate (or pert), deadline, not_before, depends_on, order, tags, prs, description, milestone (moves it: the code changes) — or append a note. Nullable fields accept null to clear them. Set `prs` right after opening a pull request, with its URL or owner/repo#N (stored as owner/repo#N); it replaces the list ([] clears it). The PR's repo must be linked to the task's project (update_project repos), and company projects take no PRs. Returns the task's new slot and the effect on the schedule.",
       inputSchema: TaskPatch.extend({ id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id).") }),
       annotations: { ...WRITE, idempotentHint: true },
     },
@@ -271,6 +280,21 @@ export function registerPmServer(server: McpServer) {
         const { plan, summary } = impact(ws, [task.id]);
         return json({ task: taskRow(task, ws, plan), schedule: summary });
       }),
+  );
+
+  server.registerTool(
+    "add_comment",
+    {
+      title: "Add a task comment",
+      description:
+        "Append a plain-text note to a task (any project). Use it for progress, findings or hand-off notes; it is stored as written, never edited. Not markdown, and my_pm never resolves references in it (a PR link or task code stays text). Comments are append-only over MCP (the user can delete them in the web UI); get_task returns them. Returns the created comment (author is agent). Max 10000 characters.",
+      inputSchema: z.object({
+        id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id)."),
+        body: z.string().describe("The note, plain text."),
+      }),
+      annotations: WRITE,
+    },
+    async ({ id, body }) => run(async () => json(await addComment(id, body, "agent"))),
   );
 
   server.registerTool(

@@ -89,7 +89,7 @@ async function neonTestDb(url: string): Promise<PgRepository> {
   };
   try {
     await migrate(session);
-    await session.exec("truncate tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
+    await session.exec("truncate task_comments, github_snapshots, tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
   } finally {
     await client.end();
   }
@@ -303,6 +303,21 @@ describe.each(backends)("saving edited markdown, $name backend", (backend) => {
       const errors = await refused("task", "ED-M1-T1", (text) => edit("task", text, { title: "Changed too", depends_on: "[ED-M1-T3]" }));
       expect(errors).toContain('"depends_on": dependency cycle, ED-M1-T3 already depends on ED-M1-T1');
       expect(await refused("task", "ED-M1-T1", (text) => edit("task", text, { depends_on: "[ED-M1-T1]" }))).toContain("ED-M1-T1 can't depend on itself");
+    });
+
+    it("PR references: edited as frontmatter, normalized, checked against the project's repos", async () => {
+      await repo.updateProject("ED", { repos: ["github.com/ed/site"] });
+      const first = await roundTrip("task", "ED-M1-T3", (text) => edit("task", text, { prs: "[ed/site#3, ed/site#4]" }));
+      expect(first.saved.prs).toEqual(["ed/site#3", "ed/site#4"]);
+      // A pasted URL is accepted and normalized (the reloaded text shows the short form).
+      const { record, text } = await opened("task", "ED-M1-T3");
+      const url = await saveEditedRecord("task", record.id, text, edit("task", text, { prs: "[https://github.com/Ed/Site/pull/9]" }));
+      expect(url).toEqual({ ok: true, code: "ED-M1-T3", changed: true });
+      expect((await repo.getTask(record.id)).prs).toEqual(["ed/site#9"]);
+      expect(await refused("task", "ED-M1-T3", (t) => edit("task", t, { prs: "[ed/other#1]" }))).toContain("isn't linked to project ED");
+      expect(await refused("task", "ED-M1-T3", (t) => edit("task", t, { prs: "[nonsense]" }))).toContain("prs:");
+      await roundTrip("task", "ED-M1-T3", (t) => edit("task", t, { prs: null }));
+      expect((await repo.getTask(record.id)).prs).toEqual([]);
     });
 
     it("a stale base (the record changed through the repository after the editor opened)", async () => {

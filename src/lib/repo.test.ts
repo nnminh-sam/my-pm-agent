@@ -5,7 +5,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { Client } from "@neondatabase/serverless";
 import YAML from "yaml";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { newId } from "./codes";
 import { neonDb, type Db, type Row } from "./db";
 import { migrate, type MigrationSession } from "./migrate";
@@ -17,7 +17,7 @@ import { PgRepository } from "./repository/postgres";
 import { FsStore } from "./store/fs";
 import { todayIn } from "./time";
 import { compareBackends, exportTo, importInto, readAll } from "./transfer";
-import type { Task } from "./types";
+import type { GithubSnapshot, Task, TaskComment } from "./types";
 
 /** The seed sdlc playbook as a stored version. */
 async function sdlcVersion(version = "1.0.0"): Promise<PlaybookVersion> {
@@ -78,7 +78,7 @@ async function neonTestDb(url: string): Promise<PgRepository> {
   };
   try {
     await migrate(session);
-    await session.exec("truncate tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
+    await session.exec("truncate task_comments, github_snapshots, tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
   } finally {
     await client.end();
   }
@@ -393,6 +393,300 @@ describe.each(backends)("$name backend", (backend) => {
     });
   });
 
+  describe("GitHub snapshots, PR references and comments", () => {
+    let task: Task;
+    let other: Task;
+    beforeAll(async () => {
+      await repo.createProject({ title: "GitHub", code: "GH" });
+      await repo.createMilestone({ title: "PRs", project: "GH" });
+      [task, other] = await repo.createTasks([
+        { title: "Review", milestone: "GH-M1" },
+        { title: "Other", milestone: "GH-M1" },
+      ]);
+    });
+
+    it("stores a task's PR references", async () => {
+      expect(task.prs).toEqual([]);
+      if (backend.dir) expect(await readFile(path.join(backend.dir, `tasks/${task.id}.md`), "utf8")).not.toContain("prs");
+      await backendRepo.save({ tasks: [{ ...task, prs: ["nnminh-sam/my-pm-agent#12", "acme/web.site#3"] }] });
+      expect((await repo.getTask("GH-M1-T1")).prs).toEqual(["nnminh-sam/my-pm-agent#12", "acme/web.site#3"]);
+      if (backend.dir) {
+        const text = await readFile(path.join(backend.dir, `tasks/${task.id}.md`), "utf8");
+        expect(text).toContain("prs: [nnminh-sam/my-pm-agent#12, acme/web.site#3]");
+      }
+      expect((await repo.loadWorkspace()).problems).toEqual([]);
+    });
+
+    it("sets a task's PRs through updateTask: normalized, de-duplicated, replaced, cleared", async () => {
+      await repo.updateProject("GH", { repos: ["https://github.com/GH/Site.git"] });
+      const set = await repo.updateTask(other.id, {
+        prs: ["https://github.com/GH/Site/pull/7/files", "gh/site#7", "GH/Site#9"],
+      });
+      expect(set.prs).toEqual(["gh/site#7", "gh/site#9"]);
+      expect((await repo.getTask(other.id)).prs).toEqual(["gh/site#7", "gh/site#9"]);
+      // Other patches leave the list alone; a new list replaces it; [] clears it.
+      expect((await repo.updateTask(other.id, { title: "Other!" })).prs).toEqual(["gh/site#7", "gh/site#9"]);
+      expect((await repo.updateTask(other.id, { prs: ["gh/site#11"] })).prs).toEqual(["gh/site#11"]);
+      expect((await repo.updateTask(other.id, { prs: [] })).prs).toEqual([]);
+    });
+
+    it("rejects malformed PRs and repos the project doesn't link, changing nothing", async () => {
+      await repo.updateTask(other.id, { prs: ["gh/site#1"] });
+      await expect(repo.updateTask(other.id, { title: "Nope", prs: ["gh/site#2", "gh/other#3"] })).rejects.toThrow(
+        /gh\/other#3 is in gh\/other, which isn't linked to project GH.*Linked repos: github.com\/gh\/site.*update_project/,
+      );
+      await expect(repo.updateTask(other.id, { prs: ["https://gitlab.com/gh/site/pull/2"] })).rejects.toThrow(/^prs: Only GitHub PRs/);
+      await expect(repo.updateTask(other.id, { prs: ["not a pr"] })).rejects.toBeInstanceOf(repo.PrReferenceError);
+      expect(await repo.getTask(other.id)).toMatchObject({ title: "Other!", prs: ["gh/site#1"] });
+      // A project with no linked repos says so.
+      await repo.createProject({ title: "Bare", code: "BR" });
+      await repo.createMilestone({ title: "M", project: "BR" });
+      const [bare] = await repo.createTasks([{ title: "Bare task", milestone: "BR-M1" }]);
+      await expect(repo.updateTask(bare.id, { prs: ["gh/site#1"] })).rejects.toThrow("It has no linked repos");
+    });
+
+    it("refuses PRs on a company project and never contacts GitHub", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      try {
+        await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
+        await repo.createMilestone({ title: "M", project: "CO" });
+        const [corp] = await repo.createTasks([{ title: "Review", milestone: "CO-M1" }]);
+        await expect(repo.updateTask(corp.id, { prs: ["corp/app#5"] })).rejects.toThrow(/CO is a company project/);
+        expect((await repo.getTask(corp.id)).prs).toEqual([]);
+        // Clearing is always fine.
+        expect((await repo.updateTask(corp.id, { prs: [] })).prs).toEqual([]);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it("re-checks PRs when a task moves to another milestone", async () => {
+      await repo.createProject({ title: "Mv", code: "MV", repos: ["github.com/mv/one"] });
+      await repo.createProject({ title: "Mv2", code: "MW", repos: ["github.com/mv/two"] });
+      await repo.createMilestone({ title: "A", project: "MV" });
+      await repo.createMilestone({ title: "B", project: "MV" });
+      await repo.createMilestone({ title: "C", project: "MW" });
+      const [moved] = await repo.createTasks([{ title: "Mover", milestone: "MV-M1" }]);
+      await repo.updateTask(moved.id, { prs: ["mv/one#4"] });
+      // Same project: fine. Another project that doesn't link the repo: refused, nothing moves.
+      expect(await repo.updateTask(moved.id, { milestone: "MV-M2" })).toMatchObject({ code: "MV-M2-T1", prs: ["mv/one#4"] });
+      await expect(repo.updateTask(moved.id, { milestone: "MW-M1" })).rejects.toThrow(/Can't move MV-M2-T1 to MW-M1: PR mv\/one#4 is in mv\/one, which isn't linked to project MW/);
+      expect((await repo.getTask(moved.id)).code).toBe("MV-M2-T1");
+      // Clearing the PRs in the same patch lets the move through; so does listing ones the destination links.
+      expect(await repo.updateTask(moved.id, { milestone: "MW-M1", prs: ["mv/two#8"] })).toMatchObject({ code: "MW-M1-T1", prs: ["mv/two#8"] });
+      expect(await repo.updateTask(moved.id, { milestone: "MV-M1", prs: [] })).toMatchObject({ code: "MV-M1-T2", prs: [] });
+    });
+
+    it("keeps one snapshot per key and replaces it whole", async () => {
+      const key = "pr:nnminh-sam/my-pm-agent#12";
+      expect(await backendRepo.getGithubSnapshot(key)).toBeNull();
+      // Never synced: the first attempt failed.
+      const never = {
+        key,
+        last_attempt_at: "2026-09-29T01:00:00.000Z",
+        last_error: { reason: "github_down", status: 503, message: "Service Unavailable" },
+      };
+      await backendRepo.upsertGithubSnapshot(never);
+      expect(await backendRepo.getGithubSnapshot(key)).toEqual(never);
+
+      const synced = {
+        key,
+        data: {
+          title: "Add <script>",
+          body: "Line 1\n\nLine 2\n",
+          state: "open",
+          merged_at: null,
+          reviewers: [{ login: "octo", state: "approved" }],
+          number: 12,
+          draft: false,
+        },
+        fetched_at: "2026-09-29T01:05:00.123Z",
+        last_attempt_at: "2026-09-29T01:05:00.000Z",
+      };
+      await backendRepo.upsertGithubSnapshot(synced);
+      expect(await backendRepo.getGithubSnapshot(key)).toEqual(synced);
+
+      // Rate-limited: the caller keeps the data and records the failure.
+      const limited = {
+        ...synced,
+        last_attempt_at: "2026-09-29T01:10:00.000Z",
+        last_error: { reason: "rate_limited", status: 429, request_id: "ABCD:1234" },
+        retry_after: "2026-09-29T02:00:00.000Z",
+      };
+      await backendRepo.upsertGithubSnapshot(limited);
+      expect(await backendRepo.getGithubSnapshot(key)).toEqual(limited);
+
+      // A repo's open-PR list is an array.
+      const list = { key: "repo:nnminh-sam/my-pm-agent", data: [{ number: 12, title: "Add" }], fetched_at: "2026-09-29T01:00:00.000Z" };
+      await backendRepo.upsertGithubSnapshot(list);
+      expect(await backendRepo.getGithubSnapshot(list.key)).toEqual(list);
+
+      for (const bad of ["pr:acme/api", "issue:acme/api#1", "../tasks/x", "repo:acme"]) {
+        expect(await backendRepo.getGithubSnapshot(bad)).toBeNull();
+        await expect(backendRepo.upsertGithubSnapshot({ key: bad })).rejects.toThrow();
+      }
+      if (backend.dir) {
+        const text = await readFile(path.join(backend.dir, "github_snapshots/pr%3Annminh-sam%2Fmy-pm-agent%2312.yaml"), "utf8");
+        expect(text).toMatch(/^key: pr:nnminh-sam\/my-pm-agent#12\ndata:\n/);
+      }
+    });
+
+    it("validates snapshots and stores timestamps as toISOString() on every backend", async () => {
+      const key = "pr:acme/api#1";
+      await backendRepo.upsertGithubSnapshot({
+        key,
+        data: { title: "x" },
+        fetched_at: "2026-09-29T01:05:00Z",
+        last_attempt_at: "2026-09-29T01:05:00.1Z",
+        retry_after: "2026-09-29T02:00:00.123456Z",
+      });
+      expect(await backendRepo.getGithubSnapshot(key)).toEqual({
+        key,
+        data: { title: "x" },
+        fetched_at: "2026-09-29T01:05:00.000Z",
+        last_attempt_at: "2026-09-29T01:05:00.100Z",
+        retry_after: "2026-09-29T02:00:00.123Z",
+      });
+      for (const bad of [{ key, fetched_at: "yesterday" }, { key, fetched_at: "2026-09-29T01:05:00+07:00" }, { key, data: "text" }, { key: "PR:Acme/Api#1" }]) {
+        await expect(backendRepo.upsertGithubSnapshot(bad as GithubSnapshot)).rejects.toThrow();
+      }
+      expect((await backendRepo.getGithubSnapshot(key))?.fetched_at).toBe("2026-09-29T01:05:00.000Z");
+    });
+
+    it("finds the projects linking a repo, and whether GitHub may be contacted for it", async () => {
+      expect((await backendRepo.findProjectsByRepo("github.com/gh/site")).map((p) => p.code)).toEqual(["GH"]);
+      expect((await backendRepo.findProjectsByRepo("github.com/corp/app")).map((p) => p.code)).toEqual(["CO"]);
+      expect(await backendRepo.findProjectsByRepo("github.com/nobody/here")).toEqual([]);
+      expect(await repo.githubRepoAccess("gh/site")).toEqual({ allowed: true });
+      expect(await repo.githubRepoAccess("corp/app")).toMatchObject({ allowed: false, refusal: "company", message: expect.stringContaining("CO") });
+      expect(await repo.githubRepoAccess("nobody/here")).toMatchObject({ allowed: false, refusal: "not_linked" });
+    });
+
+    it("keeps a task's comments oldest first and deletes them one at a time", async () => {
+      const at = (minute: number) => `2026-09-29T01:${String(minute).padStart(2, "0")}:00.000Z`;
+      const second = { id: newId(), task_id: task.id, author: "agent" as const, created_at: at(2), body: "Opened PR 12.\n\n  <script>alert(1)</script>\n" };
+      const first = { id: newId(), task_id: task.id, author: "you" as const, created_at: at(1), body: "review PR 412, check the migration" };
+      const elsewhere = { id: newId(), task_id: other.id, author: "you" as const, created_at: at(0), body: "other" };
+      for (const c of [second, first, elsewhere]) await backendRepo.insertComment(c);
+      expect(await backendRepo.listComments(task.id)).toEqual([first, second]);
+      expect(await backendRepo.listComments(other.id)).toEqual([elsewhere]);
+      expect(await backendRepo.listComments(newId())).toEqual([]);
+      expect(await backendRepo.listComments("../tasks")).toEqual([]);
+
+      await expect(backendRepo.insertComment(first)).rejects.toThrow();
+      await expect(backendRepo.insertComment({ ...first, id: newId(), task_id: newId() })).rejects.toThrow();
+      await expect(backendRepo.insertComment({ ...first, id: newId(), body: "" })).rejects.toThrow();
+      await expect(backendRepo.insertComment({ ...first, id: newId(), author: "bot" as "you" })).rejects.toThrow();
+
+      if (backend.dir) {
+        const text = await readFile(path.join(backend.dir, `comments/${task.id}/${second.id}.yaml`), "utf8");
+        expect(text).toMatch(new RegExp(`^id: ${second.id}\ntask_id: ${task.id}\nauthor: agent\ncreated_at: ${second.created_at}\nbody: `));
+      }
+
+      expect(await backendRepo.deleteComment(other.id, first.id)).toBe(false);
+      expect(await backendRepo.deleteComment(task.id, first.id)).toBe(true);
+      expect(await backendRepo.deleteComment(task.id, first.id)).toBe(false);
+      expect(await backendRepo.deleteComment(task.id, "../x")).toBe(false);
+      expect(await backendRepo.listComments(task.id)).toEqual([second]);
+
+      const all = await backendRepo.loadSnapshotsAndComments();
+      expect(all.comments).toEqual([second, elsewhere].sort((a, b) => (a.task_id < b.task_id ? -1 : 1)));
+      expect(all.snapshots.map((s) => s.key)).toEqual(["pr:acme/api#1", "pr:nnminh-sam/my-pm-agent#12", "repo:nnminh-sam/my-pm-agent"]);
+      expect(all.problems).toEqual([]);
+    });
+
+    it("ignores the comments of a task whose file is gone (files have no cascade)", async () => {
+      if (!backend.dir) return; // Postgres: the foreign key cascades (migrate.test.ts).
+      const [gone] = await repo.createTasks([{ title: "Gone", milestone: "GH-M1" }]);
+      await backendRepo.insertComment({ id: newId(), task_id: gone.id, author: "you", created_at: "2026-09-29T03:00:00.000Z", body: "bye" });
+      const before = (await backendRepo.loadSnapshotsAndComments()).comments.length;
+      await rm(path.join(backend.dir, `tasks/${gone.id}.md`));
+      const after = await backendRepo.loadSnapshotsAndComments();
+      expect(after.comments).toHaveLength(before - 1);
+      expect(after.comments.some((c) => c.task_id === gone.id)).toBe(false);
+      expect(after.problems).toEqual([]);
+    });
+  });
+
+  describe("task comments", () => {
+    let a: Task;
+    let b: Task;
+    let c: Task;
+    beforeAll(async () => {
+      await repo.createProject({ title: "Comments", code: "CMT" });
+      await repo.createMilestone({ title: "One", project: "CMT" });
+      await repo.createMilestone({ title: "Two", project: "CMT" });
+      [a, b] = await repo.createTasks([
+        { title: "A", milestone: "CMT-M1" },
+        { title: "B", milestone: "CMT-M1" },
+      ]);
+      [c] = await repo.createTasks([{ title: "C", milestone: "CMT-M2" }]);
+    });
+
+    it("adds comments and lists them oldest first, by code or id", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-09-29T01:00:00.000Z"));
+        const first = await repo.addComment("cmt-m1-t1", "first", "you");
+        vi.setSystemTime(new Date("2026-09-29T02:00:00.000Z"));
+        const second = await repo.addComment(a.id, "second", "agent");
+        expect(first).toMatchObject({ task_id: a.id, author: "you", created_at: "2026-09-29T01:00:00.000Z", body: "first" });
+        expect(first.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        expect(await repo.listComments("CMT-M1-T1")).toEqual([first, second]);
+        expect(await repo.listComments(a.id)).toEqual([first, second]);
+        expect(await repo.listComments("CMT-M1-T2")).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+      await expect(repo.addComment("CMT-M1-T99", "x", "you")).rejects.toBeInstanceOf(repo.NotFoundError);
+      await expect(repo.listComments("CMT-M1-T99")).rejects.toBeInstanceOf(repo.NotFoundError);
+    });
+
+    it("trims the body, and rejects an empty or over-long one", async () => {
+      expect((await repo.addComment(b.id, "  \n line 1\n\n  line 2 \n", "you")).body).toBe("line 1\n\n  line 2");
+      await expect(repo.addComment(b.id, " \n\t ", "you")).rejects.toThrow("Comment body is empty");
+      await expect(repo.addComment(b.id, "x".repeat(repo.MAX_COMMENT_LENGTH + 1), "you")).rejects.toThrow("too long");
+      expect((await repo.addComment(b.id, "x".repeat(repo.MAX_COMMENT_LENGTH), "you")).body).toHaveLength(repo.MAX_COMMENT_LENGTH);
+      await expect(repo.addComment(b.id, "hi", "bot" as "you")).rejects.toThrow();
+      expect(await repo.listComments(b.id)).toHaveLength(2);
+    });
+
+    it("stores markup and references verbatim", async () => {
+      const body = "<script>alert(1)</script> **bold** see CMT-M1-T1 and [x](http://a.b)";
+      const comment = await repo.addComment(c.id, body, "agent");
+      expect(comment.body).toBe(body);
+      expect((await repo.listComments(c.code))[0].body).toBe(body);
+    });
+
+    it("deletes a comment, and says when it or the task is missing", async () => {
+      const [keep, drop] = [await repo.addComment(c.id, "keep", "you"), await repo.addComment(c.id, "drop", "you")];
+      await repo.deleteComment(c.code, drop.id);
+      expect((await repo.listComments(c.id)).map((x) => x.id)).toContain(keep.id);
+      expect((await repo.listComments(c.id)).map((x) => x.id)).not.toContain(drop.id);
+      await expect(repo.deleteComment(c.code, drop.id)).rejects.toThrow(`Comment ${drop.id} not found on task CMT-M2-T1`);
+      await expect(repo.deleteComment(c.code, "../x")).rejects.toBeInstanceOf(repo.NotFoundError);
+      await expect(repo.deleteComment("CMT-M2-T9", keep.id)).rejects.toThrow("Task CMT-M2-T9 not found");
+    });
+
+    it("won't delete a comment through another task (even in a different milestone)", async () => {
+      const mine = await repo.addComment(a.id, "mine", "you");
+      await expect(repo.deleteComment(c.code, mine.id)).rejects.toThrow(/not found on task CMT-M2-T1/);
+      await expect(repo.deleteComment(b.code, mine.id)).rejects.toThrow(/not found on task CMT-M1-T2/);
+      expect((await repo.listComments(a.id)).map((x) => x.id)).toContain(mine.id);
+    });
+
+    it("works on a company project", async () => {
+      await repo.createProject({ title: "Corp comments", code: "CCM", context: "company", repos: ["github.com/corp/ccm"] });
+      await repo.createMilestone({ title: "M", project: "CCM" });
+      const [t] = await repo.createTasks([{ title: "T", milestone: "CCM-M1" }]);
+      const comment = await repo.addComment(t.code, "internal note", "agent");
+      expect(await repo.listComments(t.id)).toEqual([comment]);
+      await repo.deleteComment(t.id, comment.id);
+      expect(await repo.listComments(t.id)).toEqual([]);
+    });
+  });
+
   describe("lifecycle writes", () => {
     let seed: Record<string, unknown>;
     beforeAll(async () => {
@@ -698,12 +992,156 @@ describe("normalizeRepo", () => {
       "ssh://git@github.com/owner/repo",
       "https://user:token@github.com/owner/repo",
       "github.com/owner/repo",
+      "https://www.github.com/Owner/Repo.git",
+      "www.github.com/owner/repo",
+      "git@www.github.com:owner/repo.git",
     ]) {
       expect(repo.normalizeRepo(remote)).toBe("github.com/owner/repo");
     }
     expect(repo.normalizeRepo("ssh://git@gitlab.acme.test:2222/team/app.git")).toBe("gitlab.acme.test:2222/team/app");
     expect(repo.normalizeRepo("https://dev.azure.com/org/project/_git/repo")).toBe("dev.azure.com/org/project/_git/repo");
+    expect(repo.normalizeRepo("https://www.gitlab.com/o/r")).toBe("www.gitlab.com/o/r"); // only github.com drops www.
     for (const bad of ["", "repo", "https://", "not a remote"]) expect(() => repo.normalizeRepo(bad)).toThrow();
+  });
+});
+
+describe("normalizePr", () => {
+  it("accepts short form owner/repo#number", () => {
+    expect(repo.normalizePr("owner/repo#123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("Owner/Repo#456")).toBe("owner/repo#456");
+    expect(repo.normalizePr("my-owner/my-repo#1")).toBe("my-owner/my-repo#1");
+    expect(repo.normalizePr("  owner/repo#789  \n")).toBe("owner/repo#789");
+  });
+
+  it("accepts full GitHub PR URLs with various schemes and formats", () => {
+    for (const url of [
+      "https://github.com/owner/repo/pull/123",
+      "https://github.com/Owner/Repo/pull/456",
+      "http://github.com/owner/repo/pull/789",
+      "github.com/owner/repo/pull/123",
+      "www.github.com/owner/repo/pull/456",
+      "https://www.github.com/owner/repo/pull/789",
+    ]) {
+      expect(repo.normalizePr(url)).toMatch(/^owner\/repo#\d+$/);
+    }
+  });
+
+  it("handles PR URLs with trailing paths, query strings, and fragments", () => {
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123/files")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123/commits")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123?tab=files")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123#discussion_123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/owner/repo/pull/123/")).toBe("owner/repo#123");
+  });
+
+  it("handles user credentials in URLs", () => {
+    expect(repo.normalizePr("https://user:password@github.com/owner/repo/pull/123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://token@github.com/owner/repo/pull/123")).toBe("owner/repo#123");
+  });
+
+  it("lowercases owner/repo but preserves number", () => {
+    expect(repo.normalizePr("Owner/Repo#123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://github.com/MyOwner/MyRepo/pull/999")).toBe("myowner/myrepo#999");
+  });
+
+  it("handles uppercase scheme and host", () => {
+    expect(repo.normalizePr("HTTPS://GITHUB.COM/owner/repo/pull/123")).toBe("owner/repo#123");
+    expect(repo.normalizePr("https://GitHub.Com/owner/repo/pull/456")).toBe("owner/repo#456");
+    expect(repo.normalizePr("HTTP://github.com/owner/repo/pull/789")).toBe("owner/repo#789");
+  });
+
+  it("handles .git suffix in short form (normalizeRepo strips it)", () => {
+    expect(repo.normalizePr("owner/repo.git#123")).toBe("owner/repo#123");
+  });
+
+  it("rejects empty strings", () => {
+    expect(() => repo.normalizePr("")).toThrow("cannot be empty");
+    expect(() => repo.normalizePr("  \n  ")).toThrow("cannot be empty");
+  });
+
+  it("rejects non-numeric PR numbers", () => {
+    expect(() => repo.normalizePr("owner/repo#abc")).toThrow();
+    expect(() => repo.normalizePr("owner/repo#")).toThrow();
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull/abc")).toThrow();
+  });
+
+  it("rejects PR numbers with leading zeros", () => {
+    expect(() => repo.normalizePr("owner/repo#0123")).toThrow();
+    expect(() => repo.normalizePr("owner/repo#00")).toThrow();
+  });
+
+  it("rejects PR number zero", () => {
+    expect(() => repo.normalizePr("owner/repo#0")).toThrow();
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull/0")).toThrow();
+  });
+
+  it("rejects PR numbers longer than 9 digits", () => {
+    expect(() => repo.normalizePr("owner/repo#1234567890")).toThrow();
+    expect(() => repo.normalizePr("owner/repo#9999999999")).toThrow();
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull/1234567890")).toThrow();
+  });
+
+  it("rejects GitHub issues (not pull requests)", () => {
+    expect(() => repo.normalizePr("https://github.com/owner/repo/issues/123")).toThrow(/issues/);
+    expect(() => repo.normalizePr("https://github.com/owner/repo/issues/456/")).toThrow(/issues/);
+  });
+
+  it("rejects /pulls/ instead of /pull/", () => {
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pulls/123")).toThrow();
+  });
+
+  it("rejects non-github.com hosts", () => {
+    expect(() => repo.normalizePr("https://gitlab.com/owner/repo/pull/123")).toThrow(/GitHub/);
+    expect(() => repo.normalizePr("https://github.example.com/owner/repo/pull/123")).toThrow(/GitHub/);
+    expect(() => repo.normalizePr("https://github.com.evil.com/owner/repo/pull/123")).toThrow(/GitHub/);
+    expect(() => repo.normalizePr("https://bitbucket.org/owner/repo/pull/123")).toThrow(/GitHub/);
+  });
+
+  it("rejects host smuggling via query string (?@)", () => {
+    expect(() => repo.normalizePr("https://evil.com?x=@github.com/a/b/pull/1")).toThrow();
+  });
+
+  it("rejects host smuggling via fragment (#@)", () => {
+    expect(() => repo.normalizePr("https://evil.com#@github.com/a/b/pull/1")).toThrow();
+  });
+
+  it("rejects ports", () => {
+    expect(() => repo.normalizePr("https://github.com:8080/owner/repo/pull/123")).toThrow(/port/i);
+    expect(() => repo.normalizePr("github.com:2222/owner/repo/pull/123")).toThrow();
+  });
+
+  it("rejects non-HTTP(S) schemes", () => {
+    expect(() => repo.normalizePr("ssh://git@github.com/owner/repo/pull/123")).toThrow(/HTTP/);
+    expect(() => repo.normalizePr("git://github.com/owner/repo/pull/123")).toThrow(/HTTP/);
+    expect(() => repo.normalizePr("ftp://github.com/owner/repo/pull/123")).toThrow(/HTTP/);
+  });
+
+  it("rejects extra path segments before /pull/", () => {
+    expect(() => repo.normalizePr("https://github.com/x/a/b/pull/1")).toThrow(); // 3 segments instead of 2
+    expect(() => repo.normalizePr("https://github.com/a/b/blob/x/pull/1")).toThrow(); // /blob/ before /pull/
+  });
+
+  it("rejects malformed PR path numbers (pull/1abc)", () => {
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull/1abc")).toThrow();
+    expect(() => repo.normalizePr("owner/repo#1abc")).toThrow();
+  });
+
+  it("rejects multiple hash symbols", () => {
+    expect(() => repo.normalizePr("a/b#1#2")).toThrow(); // only first # counts in regex
+    // Technically this might match as a/b#1 due to regex, let's verify
+  });
+
+  it("rejects invalid owner/repo formats", () => {
+    expect(() => repo.normalizePr("owner#123")).toThrow(); // missing repo
+    expect(() => repo.normalizePr("owner/repo/extra#123")).toThrow(); // too many segments
+    expect(() => repo.normalizePr("https://github.com/owner/repo")).toThrow(); // missing /pull/number
+    expect(() => repo.normalizePr("https://github.com/owner/repo/pull")).toThrow(); // missing number
+  });
+
+  it("rejects junk input", () => {
+    expect(() => repo.normalizePr("not a pr")).toThrow();
+    expect(() => repo.normalizePr("owner/repo/pull/123")).toThrow(); // missing github.com
+    expect(() => repo.normalizePr("random text #123")).toThrow();
   });
 });
 
@@ -730,6 +1168,7 @@ describe("postgres specifics", () => {
     spent: 0,
     depends_on: [],
     tags: [],
+    prs: [],
     created: "2026-09-27",
     body: "",
   });
@@ -771,6 +1210,18 @@ describe("postgres specifics", () => {
 
 describe("import / export", () => {
   let source: FileRepository;
+  let comments: TaskComment[];
+  const SNAPSHOTS: GithubSnapshot[] = [
+    {
+      key: "pr:acme/px#7",
+      data: { title: "Add", body: "Body\n\n- [ ] item", state: "merged", merged_at: "2026-09-28T10:00:00Z", milestone: null, reviewers: [] },
+      fetched_at: "2026-09-28T10:00:01.000Z",
+      last_attempt_at: "2026-09-29T00:00:00.000Z",
+      last_error: { reason: "github_down", status: 502, message: "Bad Gateway", request_id: null },
+    },
+    { key: "pr:acme/px#8", last_attempt_at: "2026-09-29T00:00:00.000Z", last_error: { reason: "rate_limited" }, retry_after: "2026-09-29T01:00:00.000Z" },
+    { key: "repo:acme/px", data: [], fetched_at: "2026-09-29T00:00:00.000Z" },
+  ];
 
   beforeAll(async () => {
     const dir = await tempDir();
@@ -806,6 +1257,17 @@ describe("import / export", () => {
         },
       ],
     });
+    // So do PR references, GitHub snapshots and comments.
+    const t1 = await repo.getTask("PX-M1-T1");
+    await source.save({ tasks: [{ ...t1, prs: ["acme/px#7", "acme/px#8"] }] });
+    for (const snapshot of SNAPSHOTS) await source.upsertGithubSnapshot(snapshot);
+    const t2 = await repo.getTask("PX-M1-T2");
+    comments = [
+      { id: newId(), task_id: t1.id, author: "you", created_at: "2026-09-29T01:00:00.000Z", body: "review PR 412,\ncheck the migration\n" },
+      { id: newId(), task_id: t1.id, author: "agent", created_at: "2026-09-29T01:00:00.500Z", body: "  <b>done</b>" },
+      { id: newId(), task_id: t2.id, author: "you", created_at: "2026-09-28T23:59:59.999Z", body: "#1 first" },
+    ];
+    for (const comment of comments) await source.insertComment(comment);
     // Users are never transferred.
     await repo.createUser({ email: "me@example.com", password_hash: "hash" });
     // Nor are API keys.
@@ -843,6 +1305,18 @@ describe("import / export", () => {
     const exported = new FileRepository(new FsStore(await tempDir()));
     await exportTo(exported, pg);
     expect(await compareBackends(source, exported)).toEqual([]);
+    // PR references, snapshots and comments made it both ways.
+    expect((await exported.getTask({ code: "PX-M1-T1" }))?.prs).toEqual(["acme/px#7", "acme/px#8"]);
+    const carried = await exported.loadSnapshotsAndComments();
+    expect(carried.snapshots).toEqual(SNAPSHOTS);
+    expect(carried.comments).toEqual((await source.loadSnapshotsAndComments()).comments);
+    expect(carried.comments).toHaveLength(3);
+    expect(await exported.listComments(comments[0].task_id)).toEqual([comments[0], comments[1]]);
+    expect(await pg.getGithubSnapshot("pr:acme/px#8")).toEqual(SNAPSHOTS[1]);
+    // And the comparison notices when they differ.
+    await exported.deleteComment(comments[2].task_id, comments[2].id);
+    await exported.upsertGithubSnapshot({ ...SNAPSHOTS[1], retry_after: undefined });
+    expect(await compareBackends(source, exported)).toEqual(["snapshot pr:acme/px#8: retry_after differ", "comment: ids or order differ"]);
     expect(await exported.getPlaybookVersion("sdlc@1.1.0")).toEqual(await source.getPlaybookVersion("sdlc@1.1.0"));
     expect(await exported.countUsers()).toBe(0);
     expect(await exported.listApiKeys()).toEqual([]);

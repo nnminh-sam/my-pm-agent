@@ -7,6 +7,7 @@ import { Badge, Card, Markdown, PriorityBadge, Stat, hours } from "@/components/
 import { lookup } from "@/lib/hierarchy";
 import { milestoneEffective, milestoneSummary, scheduleFor } from "@/lib/planning";
 import { toEditable } from "@/lib/record-markdown";
+import { tasksGithub } from "@/lib/mcp/task-github";
 import { NotFoundError, getMilestone, loadWorkspace } from "@/lib/repo";
 import { fmtDay } from "@/lib/time";
 
@@ -24,6 +25,8 @@ export default async function MilestonePage({ params }: { params: Promise<{ id: 
   const s = milestoneSummary(milestone, ws, plan);
   const { project } = milestoneEffective(milestone, ws);
   const tasks = ws.tasks.filter((t) => t.milestone === milestone.id);
+  const prs = await tasksGithub(tasks, ws);
+  const now = new Date();
 
   return (
     <div className="space-y-6">
@@ -74,6 +77,8 @@ export default async function MilestonePage({ params }: { params: Promise<{ id: 
             plan={plan}
             parents={lookup(ws.milestones, ws.projects)}
             codes={new Map(ws.tasks.map((t) => [t.id, t.code]))}
+            prs={prs}
+            now={now}
           />
         ) : (
           <p className="px-4 py-3 text-sm text-muted">

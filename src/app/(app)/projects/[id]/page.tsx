@@ -2,8 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CopyCode } from "@/components/copy-code";
 import { Outlook } from "@/components/outlook";
+import { RepoLinks } from "@/components/repo-links";
+import { RepoPrs } from "@/components/repo-prs";
 import { RecordEditor } from "@/components/record-editor";
 import { Badge, Card, Markdown, PriorityBadge, Stat, hours } from "@/components/ui";
+import { loadProjectPrs } from "@/lib/github/project-prs";
 import { milestoneSummary, projectSummary, scheduleFor } from "@/lib/planning";
 import { toEditable } from "@/lib/record-markdown";
 import { NotFoundError, getProject, loadWorkspace } from "@/lib/repo";
@@ -18,7 +21,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     if (err instanceof NotFoundError) notFound();
     throw err;
   });
-  const ws = await loadWorkspace();
+  // Opening the page pulls the open PRs of each linked repo, in parallel (a snapshot under 60s old is served as is).
+  const now = new Date().toISOString();
+  const [ws, prs] = await Promise.all([loadWorkspace(), loadProjectPrs(project)]);
   const plan = scheduleFor(ws);
   const s = projectSummary(project, ws, plan);
   const milestones = ws.milestones
@@ -66,6 +71,19 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </Card>
         </div>
       </RecordEditor>
+
+      <Card className="space-y-3 px-5 py-4">
+        <h2 className="text-xs font-medium tracking-wide text-muted uppercase">Repositories</h2>
+        <RepoLinks project={project.id} repos={project.repos} />
+        {project.context === "company" && (
+          <p className="text-xs text-muted">
+            Company project: my_pm never contacts GitHub for it, so no pull requests are shown. Linked repos are still
+            used by local hooks.
+          </p>
+        )}
+      </Card>
+
+      <RepoPrs prs={prs} now={now} />
 
       <Card>
         <h2 className="border-b border-border px-4 py-2.5 font-medium">

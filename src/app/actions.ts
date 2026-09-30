@@ -18,7 +18,21 @@ import { issueApiKey, revokeOwnApiKey } from "@/lib/auth/api-keys";
 import { logIn, signUp as signUpUser, type AuthOutcome } from "@/lib/auth/users";
 import { RECORD_KINDS, saveEditedRecord, type SaveRecordResult } from "@/lib/record-edit";
 import type { RecordKind } from "@/lib/record-markdown";
-import { getUser, listUserApiKeys, logTime, updateTask } from "@/lib/repo";
+import { parseAddComment, parseDeleteComment, type CommentResult } from "@/lib/comment-input";
+import { parseRepoLink, parseRepoLinkArgs, withDefaultHost, type RepoLinkResult } from "@/lib/repo-link-input";
+import {
+  NotFoundError,
+  addComment,
+  deleteComment,
+  getProject,
+  getUser,
+  listUserApiKeys,
+  logTime,
+  normalizeRepo,
+  updateProject,
+  updateTask,
+} from "@/lib/repo";
+import { retrySync, type RetryResult } from "@/lib/github/view";
 import { TaskStatus } from "@/lib/types";
 
 // Server functions are reachable by POST from any page, so each mutation re-checks auth (not only proxy.ts).
@@ -98,6 +112,85 @@ export async function logTimeAction(formData: FormData) {
   const note = String(formData.get("note") ?? "").trim() || undefined;
   await logTime(id, hours, note, formData.get("done") === "on");
   revalidatePath("/", "layout");
+}
+
+/** Adds a comment as "you". Fields: id (task code or id), body. Failures come back as `{ ok: false, message }`. */
+export async function addCommentAction(_prev: CommentResult | null, formData: FormData): Promise<CommentResult> {
+  await requireAuth();
+  const input = parseAddComment(formData);
+  if (!input.ok) return input;
+  try {
+    await addComment(input.id, input.body, "you");
+  } catch (err) {
+    return { ok: false, message: err instanceof NotFoundError ? err.message : "Couldn't save the comment" };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function deleteCommentAction(taskId: string, commentId: string): Promise<CommentResult> {
+  await requireAuth();
+  const input = parseDeleteComment(taskId, commentId);
+  if (!input.ok) return input;
+  try {
+    await deleteComment(input.taskId, input.commentId);
+  } catch (err) {
+    return { ok: false, message: err instanceof NotFoundError ? err.message : "Couldn't delete the comment" };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/**
+ * Changes a project's linked repos. `change` gets the stored list and the normalized remote. Failures come back as
+ * `{ ok: false, message }`: an invalid remote, or a repo already linked to another project (updateProject enforces it).
+ */
+async function changeRepos(
+  projectRef: string,
+  remote: string,
+  change: (repos: string[], normalized: string) => string[],
+  { defaultHost }: { defaultHost: boolean },
+): Promise<RepoLinkResult> {
+  let normalized: string;
+  try {
+    normalized = normalizeRepo(defaultHost ? withDefaultHost(remote) : remote);
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Not a git remote" };
+  }
+  try {
+    const project = await getProject(projectRef);
+    await updateProject(project.id, { repos: change(project.repos, normalized) });
+  } catch (err) {
+    if (err instanceof NotFoundError) return { ok: false, message: err.message };
+    if (err instanceof Error && / already belongs to project /.test(err.message)) return { ok: false, message: err.message };
+    return { ok: false, message: "Couldn't update the repositories" };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Links a repo to a project. Fields: project (code or id), remote (`owner/repo` or any git remote form). */
+export async function addProjectRepoAction(_prev: RepoLinkResult | null, formData: FormData): Promise<RepoLinkResult> {
+  await requireAuth();
+  const input = parseRepoLink(formData);
+  if (!input.ok) return input;
+  return changeRepos(input.project, input.remote, (repos, n) => (repos.includes(n) ? repos : [...repos, n]), { defaultHost: true });
+}
+
+/** Unlinks a repo (as stored, or in any remote form). */
+export async function removeProjectRepoAction(project: string, remote: string): Promise<RepoLinkResult> {
+  await requireAuth();
+  const input = parseRepoLinkArgs(project, remote);
+  if (!input.ok) return input;
+  return changeRepos(input.project, input.remote, (repos, n) => repos.filter((r) => r !== n), { defaultHost: false });
+}
+
+/** Retry now on a sync badge. `key` is `pr:owner/repo#123` or `repo:owner/repo`; anything else is refused. */
+export async function retryGithubSync(key: string): Promise<RetryResult> {
+  await requireAuth();
+  const result = await retrySync(key);
+  if (result.ok) revalidatePath("/", "layout");
+  return result;
 }
 
 export type SaveRecordState = SaveRecordResult | null;

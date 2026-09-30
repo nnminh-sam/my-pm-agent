@@ -14,6 +14,8 @@ import {
   type CodeKind,
 } from "./codes";
 import { pert } from "./estimation";
+import { githubRemote, type GithubFailure } from "./github/sync";
+import { lineage, lookup } from "./hierarchy";
 import { milestoneLifecycle, nextStages, projectChecks, statusForStage } from "./lifecycle";
 import { Playbook, PlaybookVersion, comparePlaybookVersions, parsePlaybookRef, playbookRef } from "./playbook";
 import { getRepository, type Repository } from "./repository";
@@ -21,6 +23,7 @@ import type { Changes, Key } from "./repository/types";
 import { todayIn } from "./time";
 import {
   ApiKey,
+  CommentAuthor,
   LIFECYCLE_STAGES,
   LifecycleStage,
   Milestone,
@@ -32,10 +35,12 @@ import {
   Settings,
   SettingsPatch,
   Task,
+  TaskComment,
   TaskStatus,
   User,
   dateStr,
   type Deployment,
+  type GithubSnapshot,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -82,6 +87,12 @@ export const TaskPatch = z.object({
   not_before: dateStr.nullable().optional(),
   depends_on: z.array(z.string()).optional().describe("Task codes (or ids)."),
   tags: z.array(z.string()).optional(),
+  prs: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Pull requests this task covers, as GitHub URLs or owner/repo#N (stored as owner/repo#N). Replaces the list; [] clears it. Each repo must be linked to the task's project; company projects take none.",
+    ),
   order: z.number().nullable().optional(),
   description: z.string().optional().describe("Replaces the markdown body."),
   append_note: z.string().optional().describe("Appended to the body under a dated heading."),
@@ -165,6 +176,8 @@ export function normalizeId(id: string, prefix: Prefix) {
 export class NotFoundError extends Error {}
 /** A write that clashes with what's stored (e.g. different content under a stored playbook version). */
 export class ConflictError extends Error {}
+/** A PR reference that can't be kept: malformed, an unlinked repo, or a company project. Its message says how to fix it. */
+export class PrReferenceError extends Error {}
 
 const EXAMPLE: Record<CodeKind, string> = { project: "PMA", milestone: "PMA-M1", task: "PMA-M1-T3" };
 const LABEL: Record<CodeKind, string> = { project: "Project", milestone: "Milestone", task: "Task" };
@@ -307,6 +320,41 @@ export async function getTask(ref: string): Promise<Task> {
   return task;
 }
 
+// ---------------------------------------------------------------------------
+// Task comments
+// ---------------------------------------------------------------------------
+
+/** Longest comment body, in characters (after trimming). */
+export const MAX_COMMENT_LENGTH = 10_000;
+
+/**
+ * Appends a plain-text comment to a task (any project, personal or company). The body is kept verbatim apart from
+ * trimming: no markdown, no reference resolution, no escaping (rendering escapes it).
+ */
+export async function addComment(taskRef: string, body: string, author: CommentAuthor): Promise<TaskComment> {
+  const task = await getTask(taskRef);
+  const text = body.trim();
+  if (!text) throw new Error("Comment body is empty");
+  if (text.length > MAX_COMMENT_LENGTH) throw new Error(`Comment is too long (${text.length} characters; the limit is ${MAX_COMMENT_LENGTH})`);
+  const comment: TaskComment = TaskComment.parse({ id: newId(), task_id: task.id, author, created_at: new Date().toISOString(), body: text });
+  await getRepository().insertComment(comment);
+  return comment;
+}
+
+/** Removes one comment, but only through the task it belongs to. */
+export async function deleteComment(taskRef: string, commentId: string): Promise<void> {
+  const task = await getTask(taskRef);
+  if (!(await getRepository().deleteComment(task.id, commentId))) {
+    throw new NotFoundError(`Comment ${commentId} not found on task ${task.code}`);
+  }
+}
+
+/** A task's comments, oldest first. */
+export async function listComments(taskRef: string): Promise<TaskComment[]> {
+  const task = await getTask(taskRef);
+  return getRepository().listComments(task.id);
+}
+
 export async function getMilestone(ref: string): Promise<Milestone> {
   const milestone = await getRepository().getMilestone(keyFor("milestone", ref));
   if (!milestone) throw new NotFoundError(`Milestone ${normalizeCode(ref)} not found`);
@@ -385,6 +433,7 @@ export async function createTasks(inputs: NewTask[]): Promise<Task[]> {
       not_before: input.not_before,
       depends_on: deps[i],
       tags: input.tags ?? [],
+      prs: [],
       created: today,
       body: input.description ?? "",
     };
@@ -410,6 +459,7 @@ export async function updateTask(ref: string, patch: TaskPatch): Promise<Task> {
   if (patch.deadline !== undefined) next.deadline = patch.deadline ?? undefined;
   if (patch.not_before !== undefined) next.not_before = patch.not_before ?? undefined;
   if (patch.tags !== undefined) next.tags = patch.tags;
+  if (patch.prs !== undefined) next.prs = normalizePrs(patch.prs);
   if (patch.order !== undefined) next.order = patch.order ?? undefined;
   if (patch.description !== undefined) next.body = patch.description;
   if (patch.append_note) next.body = withNote(next.body, `Note · ${today}`, patch.append_note);
@@ -426,14 +476,20 @@ export async function updateTask(ref: string, patch: TaskPatch): Promise<Task> {
   }
   // Last, once everything else is valid, so a rejected patch doesn't use up a number.
   let changes: Changes = { tasks: [next] };
-  if (patch.milestone !== undefined) {
-    const milestone = await getMilestone(patch.milestone);
-    if (milestone.id !== task.milestone) {
-      const ws = await loadWorkspace();
-      const number = await getRepository().allocateNumbers("tasks", milestone.id, 1);
-      Object.assign(next, { milestone: milestone.id, number, code: taskCode(milestone.code, number) });
-      changes = withMentions(ws, changes, new Map([[task.code, next.code]]));
-    }
+  const milestone = patch.milestone !== undefined ? await getMilestone(patch.milestone) : undefined;
+  const moving = milestone !== undefined && milestone.id !== task.milestone;
+  // The PRs the task ends up with must fit the project it ends up in, whether the PRs or the milestone changed.
+  if (next.prs.length && (patch.prs !== undefined || moving)) {
+    const ws = await loadWorkspace();
+    const { project } = lineage({ milestone: milestone?.id ?? task.milestone }, lookup(ws.milestones, ws.projects));
+    if (!project) throw new NotFoundError(`Project of task ${task.code} not found`);
+    assertPrsFit(next.prs, project, moving ? `Can't move ${task.code} to ${milestone.code}` : `Can't set prs on ${task.code}`);
+  }
+  if (moving) {
+    const ws = await loadWorkspace();
+    const number = await getRepository().allocateNumbers("tasks", milestone.id, 1);
+    Object.assign(next, { milestone: milestone.id, number, code: taskCode(milestone.code, number) });
+    changes = withMentions(ws, changes, new Map([[task.code, next.code]]));
   }
 
   await getRepository().save(changes);
@@ -605,9 +661,186 @@ export function normalizeRepo(remote: string): string {
     .replace(/^[^@/]+@/, "")
     .replace(/\/+$/, "")
     .replace(/\.git$/i, "")
-    .toLowerCase();
+    .toLowerCase()
+    // www.github.com is github.com: only the canonical host matches PR checks and findProjectsByRepo.
+    .replace(/^www\.github\.com(?=\/)/, "github.com");
   if (!/^[a-z0-9.-]+(:\d+)?(\/[^\s/]+)+$/.test(s)) throw new Error(`"${remote}" isn't a git remote like github.com/owner/repo`);
   return s;
+}
+
+/**
+ * Normalizes a GitHub PR reference to `owner/repo#number` format.
+ * Accepts full PR URLs (https://github.com/owner/repo/pull/123) and short form (owner/repo#123).
+ * Uses normalizeRepo to validate the owner/repo component and ensure it resolves to github.com.
+ * Rejects non-github.com hosts, issues URLs, missing or zero PR numbers, non-HTTP(S) schemes, ports, and junk.
+ * Number must be a positive integer with 1–9 digits, no leading zeros.
+ */
+export function normalizePr(prRef: string): string {
+  const s = prRef.trim();
+  if (!s) throw new Error("PR reference cannot be empty");
+
+  let ownerRepo: string;
+  let number: string;
+
+  // Try short form: owner/repo#123 (1–9 digit number, no leading zeros)
+  const shortMatch = /^([^#\s]+)#([1-9]\d{0,8})$/.exec(s);
+  if (shortMatch) {
+    [, ownerRepo, number] = shortMatch;
+    // Validate it looks like owner/repo (exactly 2 segments separated by slash)
+    const segments = ownerRepo.split("/");
+    if (segments.length !== 2 || !segments[0] || !segments[1]) {
+      throw new Error(`Invalid owner/repo format in PR reference "${prRef}" (must be owner/repo, got "${ownerRepo}")`);
+    }
+  } else {
+    // Parse URL form using URL constructor for strict validation
+    let u = s;
+
+    // If no scheme, add https:// for parsing; reject if it looks like a non-HTTP(S) scheme or user@host
+    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(u);
+    const hasOtherScheme = /^[a-z][a-z0-9+.-]*:/i.test(u);
+    const hasUserinfo = /^[^@/]+@/.test(u);
+
+    if (!hasScheme && hasOtherScheme) {
+      throw new Error(`Only HTTP/HTTPS PR URLs are supported (got "${prRef}")`);
+    }
+
+    if (!hasScheme && !hasUserinfo) {
+      u = `https://${u}`;
+    }
+
+    // Parse as URL to get strict validation
+    let url: URL;
+    try {
+      url = new URL(u);
+    } catch {
+      throw new Error(`Invalid PR URL format for "${prRef}"`);
+    }
+
+    // Validate protocol is HTTP or HTTPS
+    if (!/^https?:$/.test(url.protocol)) {
+      throw new Error(`Only HTTP/HTTPS PR URLs are supported (got "${prRef}")`);
+    }
+
+    // Validate host is exactly github.com or www.github.com (case-insensitive)
+    const hostname = url.hostname.toLowerCase();
+    if (hostname !== "github.com" && hostname !== "www.github.com") {
+      throw new Error(`Only GitHub PRs are supported (got "${prRef}")`);
+    }
+
+    // Reject any port
+    if (url.port) {
+      throw new Error(`Port numbers are not supported in PR URLs (got "${prRef}")`);
+    }
+
+    // Extract pathname and validate format exactly: /owner/repo/pull/number[/extra]
+    const pathname = url.pathname;
+    const prMatch = /^\/([a-zA-Z0-9._-]{1,39})\/([a-zA-Z0-9._-]{1,100})\/pull\/([1-9]\d{0,8})(?:\/.*)?$/.exec(
+      pathname
+    );
+
+    if (!prMatch) {
+      // Better error if it's an issues URL
+      if (/\/issues\//i.test(pathname)) {
+        throw new Error(`GitHub issues are not supported, only pull requests`);
+      }
+      throw new Error(`Invalid PR URL format for "${prRef}"`);
+    }
+
+    const [, owner, repo, num] = prMatch;
+    ownerRepo = `${owner}/${repo}`;
+    number = num;
+  }
+
+  // Validate and normalize owner/repo by treating as a github.com remote
+  // This ensures the format is valid and leverages normalizeRepo's validation
+  try {
+    const fullRemote = `github.com/${ownerRepo}`;
+    const normalized = normalizeRepo(fullRemote);
+    // Extract owner/repo from normalized form
+    // normalized should be github.com/owner/repo (lowercase)
+    const match = /^github\.com\/([a-z0-9-]{1,39}\/[a-z0-9._-]{1,100})$/.exec(normalized);
+    if (!match) {
+      throw new Error("Validation failed");
+    }
+    ownerRepo = match[1];
+  } catch {
+    throw new Error(`Invalid owner/repo format in PR reference "${prRef}"`);
+  }
+
+  return `${ownerRepo}#${number}`;
+}
+
+/** Normalizes each entry (URL or owner/repo#N) and drops repeats, keeping the first occurrence's place. */
+function normalizePrs(prs: string[]): string[] {
+  return [
+    ...new Set(
+      prs.map((pr) => {
+        try {
+          return normalizePr(pr);
+        } catch (err) {
+          throw new PrReferenceError(`prs: ${(err as Error).message}. Use a github.com pull request URL or owner/repo#123.`);
+        }
+      }),
+    ),
+  ];
+}
+
+/**
+ * PR references only make sense on a personal project whose linked repos include each PR's repo. Company projects
+ * never touch GitHub, so they take none; otherwise link the repo first (update_project repos).
+ */
+function assertPrsFit(prs: string[], project: Pick<Project, "code" | "context" | "repos">, action: string) {
+  if (project.context === "company") {
+    throw new PrReferenceError(
+      `${action}: ${project.code} is a company project, which takes no PR references (they would need GitHub). Clear prs, or note the PR in a comment.`,
+    );
+  }
+  for (const pr of prs) {
+    const repo = pr.slice(0, pr.lastIndexOf("#"));
+    if (!project.repos.includes(`github.com/${repo}`)) {
+      const linked = project.repos.length ? `Linked repos: ${project.repos.join(", ")}` : "It has no linked repos";
+      throw new PrReferenceError(
+        `${action}: PR ${pr} is in ${repo}, which isn't linked to project ${project.code}. ${linked}. Add it with update_project (repos) first, or remove the PR.`,
+      );
+    }
+  }
+}
+
+/** The snapshot stored under a key (`pr:owner/repo#123`, `repo:owner/repo`); null when there is none. */
+export async function getGithubSnapshot(key: string): Promise<GithubSnapshot | null> {
+  return getRepository().getGithubSnapshot(key);
+}
+
+/** Stores a snapshot whole (validated, timestamps normalized by the backend). */
+export async function upsertGithubSnapshot(snapshot: GithubSnapshot): Promise<void> {
+  await getRepository().upsertGithubSnapshot(snapshot);
+}
+
+/**
+ * Records a failed fetch without touching `data` / `fetched_at` (a webhook may have written them meanwhile); inserts a
+ * row without data when there is none. Returns the snapshot as stored.
+ */
+export async function recordGithubFailure(key: string, failure: GithubFailure): Promise<GithubSnapshot> {
+  return getRepository().recordGithubFailure(key, failure);
+}
+
+export type GithubAccess =
+  | { allowed: true }
+  | { allowed: false; refusal: "not_linked" | "company"; message: string };
+
+/**
+ * Whether my_pm may contact GitHub about a repo (`owner/repo`): only when it's linked to at least one personal
+ * project. Checked when data is read, not only when `prs` are written: a task's stored PRs can outlive the link
+ * (a milestone moved, a project's repos or context changed).
+ */
+export async function githubRepoAccess(repo: string): Promise<GithubAccess> {
+  const projects = await getRepository().findProjectsByRepo(githubRemote(repo));
+  if (projects.some((p) => p.context === "personal")) return { allowed: true };
+  if (projects.length) {
+    const codes = projects.map((p) => p.code).join(", ");
+    return { allowed: false, refusal: "company", message: `${repo} is linked only to company projects (${codes}), which never contact GitHub.` };
+  }
+  return { allowed: false, refusal: "not_linked", message: `${repo} isn't linked to any project. Link it with update_project (repos).` };
 }
 
 const normalizeRepos = (repos: string[]) => [...new Set(repos.map(normalizeRepo))];
