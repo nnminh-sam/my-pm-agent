@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import Script from "next/script";
 import { logout } from "@/app/actions";
+import { RefreshButton } from "@/components/refresh-button";
 import { NavigationProgress, SubmitButton } from "@/components/ui";
 import { SESSION_COOKIE, authMode, authenticate } from "@/lib/auth";
 
@@ -31,8 +32,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               {item.label}
             </Link>
           ))}
+          <span className="ml-auto flex items-center">
+            <RefreshButton />
+          </span>
           {jwt && (
-            <form action={logout} className="ml-auto flex items-center gap-2">
+            <form action={logout} className="flex items-center gap-2">
               {email && (
                 <span className="max-w-48 truncate text-xs text-muted" title={email}>
                   {email}

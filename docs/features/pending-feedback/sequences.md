@@ -78,3 +78,20 @@ sequenceDiagram
     Router-->>User: new page, skeleton and bar removed
   end
 ```
+
+## PF-3 Refresh the page
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Btn as RefreshButton (header)
+  participant Router as App Router
+  participant Server as page render
+  User->>Btn: click / press r (not in a field)
+  Btn->>Router: startTransition(router.refresh())
+  Btn-->>User: disabled, aria-busy, spinner, "Refreshing…" status
+  Router->>Server: RSC request (no document reload)
+  Server-->>Router: fresh payload
+  Router-->>User: server components updated; client state (filters, scroll, editor draft) kept
+  Btn-->>User: idle, "Updated just now"
+```
