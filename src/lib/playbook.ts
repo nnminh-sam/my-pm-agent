@@ -2,7 +2,7 @@ import { z } from "zod";
 import { LIFECYCLE_STAGES, PLAYBOOK_NAME, VERSION, datetimeStr, type LifecycleStage } from "./types";
 
 /**
- * Compiled playbooks. A project's playbook, merged with the layers it extends (sdlc, personal, company), is what
+ * Compiled playbooks. A project's playbook, merged with the layers it extends, is what
  * pm-flow sends from the playbooks repo; a layer compiled on its own has the same shape. my_pm stores every version
  * as sent and never edits one, so a project can be pinned back to any of them. Rule text stays in the playbooks
  * repo: only counts and a hash arrive here. Pure: no I/O.
@@ -25,7 +25,7 @@ const checkFields = {
   env: name
     .optional()
     .describe("Only for this environment. A release check without one applies to every environment in turn."),
-  text: z.string().optional().describe("What passing means. Left out for company projects, which store no check text."),
+  text: z.string().optional().describe("What passing means."),
   task: z
     .object({ estimate: z.number().positive(), title: z.string().min(1).optional() })
     .optional()

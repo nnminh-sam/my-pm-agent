@@ -36,7 +36,7 @@ export interface CheckStatus {
   state: CheckState;
   env?: string;
   principle?: string;
-  /** Left out for company projects. */
+  /** The text of the check. */
   text?: string;
   skill?: string;
   /** Why an auto check isn't passed, e.g. "2 of 5 tasks unestimated". */
@@ -205,7 +205,6 @@ function evaluate(
   tasks: Task[],
   environments: string[],
   maxTaskHours: number,
-  context: ProjectContext,
 ): CheckStatus {
   const { key, check, source } = entry;
   const result = milestone.checks[key];
@@ -219,7 +218,7 @@ function evaluate(
     state: computed.state,
     env: check.env,
     principle: check.principle,
-    text: context === "company" ? undefined : check.text,
+    text: check.text,
     skill: check.kind === "attest" ? check.skill : undefined,
     detail: "detail" in computed ? computed.detail : undefined,
     result,
@@ -328,7 +327,7 @@ export function milestoneLifecycle(milestone: Milestone, ctx: MilestoneContext):
   const environments = version.definition.environments.map((e) => e.name);
   const entries = projectChecks(version.definition, version.ref, project.detectors);
   const stage = milestone.stage ?? "idea";
-  const checks = entries.map((e) => evaluate(e, milestone, ctx.tasks, environments, settings.max_task_hours, project.context));
+  const checks = entries.map((e) => evaluate(e, milestone, ctx.tasks, environments, settings.max_task_hours));
   const finished = milestone.status === "done" || milestone.status === "cancelled";
   return {
     code: milestone.code,

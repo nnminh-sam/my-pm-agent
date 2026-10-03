@@ -870,35 +870,13 @@ function canonicalJson(value: unknown): string {
 
 export const hashPlaybook = (definition: Playbook) => createHash("sha256").update(canonicalJson(definition)).digest("hex");
 
-/** The company layer itself, or a playbook compiled from it. */
-export const isCompanyPlaybook = (p: Playbook) => p.name === "company" || p.layers.some((l) => l.name === "company");
-
-/** What a company playbook keeps in my_pm (D1): keys, kinds, names and links; no check, principle or environment text. */
-function metadataOnly(p: Playbook): Playbook {
-  const bare = (checks: Playbook["checks"]) =>
-    Object.fromEntries(
-      Object.entries(checks).map(([key, check]) => {
-        const copy = { ...check };
-        delete copy.text;
-        return [key, copy];
-      }),
-    );
-  return {
-    ...p,
-    principles: Object.fromEntries(Object.keys(p.principles).map((key) => [key, ""])),
-    environments: p.environments.map(({ name, url }) => (url ? { name, url } : { name })),
-    checks: bare(p.checks),
-    detectors: p.detectors.map((d) => ({ ...d, add: bare(d.add) })),
-  };
-}
-
 /**
  * Stores a compiled playbook (as pm-flow sends it) as a new version. Sending the same content again changes
  * nothing; different content under a stored version is refused, since versions never change.
  */
 export async function syncPlaybook(input: unknown, at: Date = new Date()): Promise<{ version: PlaybookVersion; created: boolean }> {
   const parsed = Playbook.parse(input);
-  const definition = isCompanyPlaybook(parsed) ? metadataOnly(parsed) : parsed;
+  const definition = parsed;
   const hash = hashPlaybook(definition);
   const ref = playbookRef(definition);
   const repository = getRepository();

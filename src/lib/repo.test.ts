@@ -711,22 +711,21 @@ describe.each(backends)("$name backend", (backend) => {
       await expect(repo.syncPlaybook({ name: "LW" })).rejects.toThrow();
     });
 
-    it("keeps only the metadata of a company playbook", async () => {
-      const { version } = await repo.syncPlaybook(
-        lw({
-          name: "ACME",
-          layers: [
-            { name: "sdlc", version: "1.0.0" },
-            { name: "company", version: "1.0.0" },
-          ],
-          environments: [{ name: "dev", db: "acme-dev", url: "https://dev.acme.test" }, { name: "prod" }],
-        }),
-      );
+    it("PO-3.1 A playbook compiled from a layer named company is stored with its text", async () => {
+      const input = lw({
+        name: "ACME",
+        layers: [
+          { name: "sdlc", version: "1.0.0" },
+          { name: "company", version: "1.0.0" },
+        ],
+        environments: [{ name: "dev", db: "acme-dev", url: "https://dev.acme.test" }, { name: "prod" }],
+      });
+      const { version } = await repo.syncPlaybook(input);
       const d = version.definition;
-      expect(Object.values(d.checks).every((c) => c.text === undefined)).toBe(true);
-      expect(d.detectors[0].add["release.migration_paired"].text).toBeUndefined();
-      expect(Object.values(d.principles).every((text) => text === "")).toBe(true);
-      expect(d.environments).toEqual([{ name: "dev", url: "https://dev.acme.test" }, { name: "prod" }]);
+      expect(d.checks).toEqual((input as Playbook).checks);
+      expect(d.detectors).toEqual((input as Playbook).detectors);
+      expect(d.principles).toEqual((input as Playbook).principles);
+      expect(d.environments).toEqual((input as Playbook).environments);
       expect(await backendRepo.getPlaybookVersion("ACME@1.0.0")).toEqual(version);
     });
 

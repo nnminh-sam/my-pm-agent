@@ -651,7 +651,7 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Store playbook version",
       description:
-        "Store a compiled playbook (a project's playbook merged with its layers, as pm-flow builds it) as a new version. Sending the same content again changes nothing; changed content needs a new version number. Company playbooks keep only metadata. pm-flow normally calls POST /api/playbooks instead.",
+        "Store a compiled playbook (a project's playbook merged with its layers, as pm-flow builds it) as a new version. Sending the same content again changes nothing; changed content needs a new version number. pm-flow normally calls POST /api/playbooks instead.",
       inputSchema: z.object({
         playbook: z
           .record(z.string(), z.unknown())

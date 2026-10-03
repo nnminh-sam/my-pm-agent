@@ -119,11 +119,12 @@ describe("checks", () => {
     expect(view.checks.at(-1)).toMatchObject({ source: "detector:migrations", env: "prod", principle: "reversible" });
   });
 
-  it("leaves check text out for company projects", () => {
+  it("PO-3.2 get_lifecycle shows check text on every project", () => {
     const acme = project("ACME", { context: "company", playbook: "PMA@1.0.0" });
     const view = only({ projects: [acme], milestones: [milestone(acme, 1, { stage: "spec" })] });
-    expect(view.checks.every((c) => c.text === undefined)).toBe(true);
-    expect(view.next).toEqual({ kind: "check", check: "spec.accepted", skill: "spec", text: "spec.accepted: open" });
+    const specCheck = view.checks.find((c) => c.key === "spec.accepted")!;
+    expect(specCheck.text).toBeDefined();
+    expect(view.next).toEqual({ kind: "check", check: "spec.accepted", env: undefined, skill: "spec", text: `spec.accepted: ${specCheck.text}` });
   });
 });
 
