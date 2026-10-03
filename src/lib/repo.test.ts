@@ -711,23 +711,24 @@ describe.each(backends)("$name backend", (backend) => {
       await expect(repo.syncPlaybook({ name: "LW" })).rejects.toThrow();
     });
 
-    it("keeps only the metadata of a company playbook", async () => {
-      const { version } = await repo.syncPlaybook(
-        lw({
-          name: "ACME",
-          layers: [
-            { name: "sdlc", version: "1.0.0" },
-            { name: "company", version: "1.0.0" },
-          ],
-          environments: [{ name: "dev", db: "acme-dev", url: "https://dev.acme.test" }, { name: "prod" }],
-        }),
-      );
-      const d = version.definition;
-      expect(Object.values(d.checks).every((c) => c.text === undefined)).toBe(true);
-      expect(d.detectors[0].add["release.migration_paired"].text).toBeUndefined();
-      expect(Object.values(d.principles).every((text) => text === "")).toBe(true);
-      expect(d.environments).toEqual([{ name: "dev", url: "https://dev.acme.test" }, { name: "prod" }]);
-      expect(await backendRepo.getPlaybookVersion("ACME@1.0.0")).toEqual(version);
+    it.each([
+      { name: "company", layers: [{ name: "sdlc", version: "1.0.0" }] },
+      { name: "ACME", layers: [{ name: "sdlc", version: "1.0.0" }, { name: "company", version: "1.0.0" }] },
+    ])("PO-3.1 A playbook named company or with a layer named company is stored with its text ($name)", async ({ name, layers }) => {
+      const input = lw({
+        name,
+        layers,
+        environments: [{ name: "dev", db: "acme-dev", url: "https://dev.acme.test" }, { name: "prod" }],
+      });
+      const expected = Playbook.parse(input);
+      const { version, created } = await repo.syncPlaybook(input);
+      expect(created).toBe(true);
+      expect(version.definition).toEqual(expected);
+      expect(await backendRepo.getPlaybookVersion(`${name}@1.0.0`)).toEqual(version);
+
+      const second = await repo.syncPlaybook(input);
+      expect(second.created).toBe(false);
+      expect(second.version).toEqual(version);
     });
 
     it("pins a project to a stored version and places its milestones on the lifecycle", async () => {
