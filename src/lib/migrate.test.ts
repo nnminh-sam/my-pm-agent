@@ -134,14 +134,14 @@ describe("006_lifecycle", { timeout: 30_000 }, () => {
       insert into milestones (id, code, number, title, status, project, created) values ('${newId()}', 'PMA-M1', 1, 'Auth', 'done', '${project}', '2026-09-27');
     `);
     expect((await migrate(session, MIGRATIONS))[0]).toBe("006_lifecycle");
-    expect(await rows("select context, playbook, repos, detectors from projects")).toEqual([
-      { context: "personal", playbook: null, repos: [], detectors: [] },
+    expect(await rows("select playbook, repos, detectors from projects")).toEqual([
+      { playbook: null, repos: [], detectors: [] },
     ]);
     expect(await rows("select stage, checks, deployments from milestones")).toEqual([{ stage: null, checks: {}, deployments: {} }]);
 
     setRepository(new PgRepository(db));
     const ws = await repo.loadWorkspace();
-    expect(ws.projects[0]).toMatchObject({ code: "PMA", context: "personal", repos: [], detectors: [] });
+    expect(ws.projects[0]).toMatchObject({ code: "PMA", repos: [], detectors: [] });
     expect(ws.milestones[0]).toMatchObject({ code: "PMA-M1", status: "done", checks: {}, deployments: {} });
     expect(ws.milestones[0].stage).toBeUndefined();
     expect(ws.playbooks).toEqual([]);
@@ -181,5 +181,22 @@ describe("007_github", { timeout: 30_000 }, () => {
     // Deleting a task (repo.ts never does yet) takes its comments with it.
     await session.exec(`delete from tasks where id = '${task}'`);
     expect(await rows("select task_id from task_comments")).toEqual([{ task_id: other }]);
+  });
+});
+
+describe("008_drop_project_context", { timeout: 30_000 }, () => {
+  it("PO-1.2 refuses to run if any project is company, leaving the column", async () => {
+    const { session, rows } = await databaseBefore("008");
+    const project = newId();
+    await session.exec(`insert into projects (id, code, title, created, context) values ('${project}', 'PMA', 'My PM Agent', '2026-09-27', 'company');`);
+    await expect(migrate(session, MIGRATIONS)).rejects.toThrow(/company/i);
+    const cols = await rows("select column_name from information_schema.columns where table_name = 'projects' and column_name = 'context'");
+    expect(cols.length).toBe(1);
+    
+    // Now delete it so we can test success
+    await session.exec(`delete from projects where id = '${project}';`);
+    await migrate(session, MIGRATIONS);
+    const colsAfter = await rows("select column_name from information_schema.columns where table_name = 'projects' and column_name = 'context'");
+    expect(colsAfter.length).toBe(0);
   });
 });

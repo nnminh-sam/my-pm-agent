@@ -311,7 +311,7 @@ describe.each(backends)("POST /api/github/webhook on the $name backend", (backen
   beforeAll(async () => {
     setRepository(await backend.setup());
     await repo.createProject({ title: "Mine", code: "ME", repos: ["github.com/me/app"] });
-    await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
+    await repo.createProject({ title: "Corp", code: "CO", repos: ["github.com/corp/app"] });
   });
   beforeEach(() => {
     vi.stubEnv("GITHUB_WEBHOOK_SECRET", SECRET);
@@ -407,7 +407,7 @@ describe.each(backends)("POST /api/github/webhook on the $name backend", (backen
     expect(await repo.getGithubSnapshot("pr:me/app#22")).toBeNull();
   });
 
-  it("PO-2.2 accepts webhook events for a project that was company", async () => {
+  it("PO-2.2 accepts webhook events for a project whose repo is linked", async () => {
     await send(delivery("pull_request", prEvent("closed", ghPull(2, { state: "closed", merged: true }), "corp/app")), 204);
     await send(delivery("pull_request_review", reviewEvent("bob", "approved", ghPull(2), "submitted", "Corp/App")), 204);
     expect((await repo.getGithubSnapshot("pr:corp/app#2"))?.data).toMatchObject({ number: 2, state: "merged", reviewers: expect.arrayContaining([{ login: "bob", state: "approved" }]) });

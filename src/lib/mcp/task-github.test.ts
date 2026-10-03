@@ -84,7 +84,6 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
     await repo.createProject({
       title: "Corp",
       code: "CO",
-      context: "company",
       repos: ["github.com/corp/app"],
     });
     await repo.createMilestone({ title: "M", project: "ME" });
@@ -175,7 +174,7 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
     fetchSpy.mockRestore();
     const mixed = await repo.getTask("ME-M1-T1");
     expect(map.get(mixed.id)?.map((e) => e.sync.sync)).toEqual(["synced", "out_of_sync", "never"]);
-    // Tasks without PRs have no entry; tasks in formerly company projects are included.
+    // Tasks without PRs have no entry; tasks in formerly linked projects are included.
     const coId = (await repo.getTask("CO-M1-T1")).id;
     expect(new Set(map.keys())).toEqual(new Set([mixed.id, coId]));
     const coEntry = map.get(coId)![0];
@@ -187,7 +186,7 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
     expect(await section("ME-M1-T2")).toBeUndefined();
   });
 
-  it("PO-2.2 serves an overview for a project that was company, but not for an unlinked repo", async () => {
+  it("PO-2.2 serves an overview for a project whose repo is linked, but not for an unlinked repo", async () => {
     expect((await section("ME-M1-T1"))![0].overview).not.toBeNull();
 
     await repo.updateProject("ME", { repos: [] });

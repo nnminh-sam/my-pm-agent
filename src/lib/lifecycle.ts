@@ -11,7 +11,6 @@ import {
   type MilestoneStatus,
   type Priority,
   type Project,
-  type ProjectContext,
   type Settings,
   type Task,
 } from "./types";
@@ -82,7 +81,7 @@ export interface LifecycleWarning {
 export interface ProjectLifecycle {
   code: string;
   title: string;
-  context: ProjectContext;
+  
   /** The pinned version, if it is stored. */
   playbook?: string;
   environments: string[];
@@ -92,7 +91,7 @@ export interface ProjectLifecycle {
 
 export interface RankedAction {
   project: string;
-  context: ProjectContext;
+  
   milestone: string;
   title: string;
   stage: LifecycleStage;
@@ -373,7 +372,6 @@ export function lifecycle({ projects, milestones, tasks, playbooks, settings, pl
     const view: ProjectLifecycle = {
       code: project.code,
       title: project.title,
-      context: project.context,
       playbook: pinned.ref,
       environments: pinned.definition.environments.map((e) => e.name),
       warnings,
@@ -396,7 +394,6 @@ export function lifecycle({ projects, milestones, tasks, playbooks, settings, pl
       if (stage === "idea" || !item.next) continue;
       result.next.push({
         project: project.code,
-        context: project.context,
         milestone: item.code,
         title: item.title,
         stage,

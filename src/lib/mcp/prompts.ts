@@ -22,7 +22,6 @@ Lifecycle — every project follows the same stages: idea → spec → design �
 - Checks: pass_check with evidence, fail_check with what failed, waive_check with a reason, reopen_check to clear. advance_stage moves a milestone on only once its stage's checks pass; never change a milestone's status to get around that.
 - Releases: record_deployment for each environment, in the playbook's order.
 - Adopting a playbook: sync_playbook stores a version, then set_playbook_version pins the project and places its existing milestones (stages). Re-pin to upgrade or roll back.
-- Company projects (context company) keep only metadata and links in my_pm: link to company documents in specs and evidence rather than copying them.
 
 Start with get_overview. Confirm with the user before bulk-creating, cancelling or re-prioritising several tasks.`;
 

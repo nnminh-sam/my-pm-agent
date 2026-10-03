@@ -171,7 +171,7 @@ describe("lifecycle MCP tools", () => {
 
   it("PO-3.2 get_lifecycle shows check text on every project", async () => {
     openMode();
-    await repo.createProject({ title: "ACME Corp", code: "ACME", context: "company" });
+    await repo.createProject({ title: "ACME Corp", code: "ACME", });
     await tool("set_playbook_version", { project: "ACME", version: "PMA@1.0.0" });
     await repo.createMilestone({ title: "M1", project: "ACME" });
     const view = await tool("get_lifecycle", { project: "ACME" });

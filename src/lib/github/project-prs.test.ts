@@ -15,7 +15,7 @@ beforeAll(async () => {
   setRepository(new FileRepository(new FsStore(dir)));
   await repo.createProject({ title: "Two", code: "TW", repos: ["https://www.github.com/Me/One.git", "git@github.com:me/two", "gitlab.com/x/y"] });
   await repo.createProject({ title: "One", code: "ON", repos: ["github.com/me/solo"] });
-  await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
+  await repo.createProject({ title: "Corp", code: "CO", repos: ["github.com/corp/app"] });
   await repo.createProject({ title: "Fail", code: "FA", repos: ["github.com/me/fail"] });
   await repo.createProject({ title: "Bare", code: "BA" });
   await repo.createProject({ title: "Elsewhere", code: "EL", repos: ["gitlab.com/x/z"] });
@@ -80,7 +80,7 @@ describe("loadProjectPrs", () => {
     expect(prs?.sections).toHaveLength(1);
   });
 
-  it("PO-2.2 a project that was company shows PRs", async () => {
+  it("PO-2.2 a project whose repo is linked shows PRs", async () => {
     const g = gh();
     const prs = await loadProjectPrs(await project("CO"), g.options);
     expect(prs?.sections).toHaveLength(1);

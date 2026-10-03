@@ -27,10 +27,6 @@ export const LIFECYCLE_STAGES = ["idea", "spec", "design", "plan", "build", "ver
 export const LifecycleStage = z.enum(LIFECYCLE_STAGES);
 export type LifecycleStage = z.infer<typeof LifecycleStage>;
 
-/** Company projects keep only metadata and links in my_pm: no check or rule text. */
-export const PROJECT_CONTEXTS = ["personal", "company"] as const;
-export const ProjectContext = z.enum(PROJECT_CONTEXTS);
-export type ProjectContext = z.infer<typeof ProjectContext>;
 
 /** `sdlc`, `personal`, or a project code such as `PMA`. */
 export const PLAYBOOK_NAME = /^[A-Za-z][A-Za-z0-9-]{0,39}$/;
@@ -148,7 +144,6 @@ export const ProjectMeta = z.object({
   status: ProjectStatus.default("active"),
   priority: Priority.default("P2"),
   deadline: dateStr.optional(),
-  context: ProjectContext.default("personal"),
   /** The pinned playbook version (`PMA@1.2.0`), one of the stored playbook versions; absent until adopted. */
   playbook: z.string().regex(PLAYBOOK_REF, "expected a playbook version like PMA@1.2.0").optional(),
   /** Normalized git remotes (`github.com/owner/repo`): how a session in a repo finds its project. */
