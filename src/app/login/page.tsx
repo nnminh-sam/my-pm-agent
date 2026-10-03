@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { login } from "@/app/actions";
-import { AuthCard, ErrorMessage, Field, ModeNotice, SubmitButton } from "@/components/auth-form";
+import { AuthCard, ErrorMessage, Field, ModeNotice, AuthSubmit } from "@/components/auth-form";
 import { authMode, safeNext } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +21,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <Field name="email" label="Email" type="email" required autoFocus autoComplete="email" />
             <Field name="password" label="Password" type="password" required autoComplete="current-password" />
             <ErrorMessage code={error} />
-            <SubmitButton>Log in</SubmitButton>
+            <AuthSubmit pendingText="Logging in…">Log in</AuthSubmit>
           </form>
           <p className="mt-4 text-sm text-muted">
             No account?{" "}

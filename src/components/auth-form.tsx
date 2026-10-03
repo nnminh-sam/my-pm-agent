@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { lockedMessage, type AuthMode } from "@/lib/auth";
+import { SubmitButton } from "@/components/ui";
 import { AUTH_ERROR_MESSAGES, type AuthError } from "@/lib/auth/users";
 
 /** Shared pieces of the /login and /signup pages. */
@@ -49,8 +50,11 @@ export function Field(props: React.InputHTMLAttributes<HTMLInputElement> & { nam
   );
 }
 
-export function SubmitButton({ children }: { children: React.ReactNode }) {
+/** The form's submit button (the shared SubmitButton, full width). */
+export function AuthSubmit({ children, pendingText }: { children: React.ReactNode; pendingText: string }) {
   return (
-    <button className="w-full rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white dark:text-black">{children}</button>
+    <SubmitButton pendingText={pendingText} className="w-full rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white dark:text-black">
+      {children}
+    </SubmitButton>
   );
 }

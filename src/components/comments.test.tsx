@@ -41,6 +41,9 @@ describe("Comments", () => {
     expect(html).toContain("Delete");
     expect(html).toContain('name="body"');
     expect(html).toContain('name="id" value="t1"');
+    // Idle: the shared pending buttons are enabled and not busy (PF-1).
+    expect(html).not.toContain("aria-busy");
+    expect(html).not.toContain("data-spinner");
   });
 
   it("has no comment list when empty", () => {

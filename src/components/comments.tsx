@@ -2,6 +2,7 @@
 
 import { useActionState, useState, useTransition } from "react";
 import { addCommentAction, deleteCommentAction } from "@/app/actions";
+import { PendingButton } from "@/components/pending";
 import { formatWhen } from "@/lib/github/sync-view";
 import type { CommentResult } from "@/lib/comment-input";
 import type { TaskComment } from "@/lib/types";
@@ -32,8 +33,10 @@ export function Comments({ taskId, comments }: { taskId: string; comments: TaskC
   const [added, add, adding] = useActionState<CommentResult | null, FormData>(addCommentAction, null);
   const [pending, startTransition] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
-  const remove = (commentId: string) =>
+  const remove = (commentId: string) => {
+    setDeleting(commentId);
     startTransition(async () => {
       try {
         const result = await deleteCommentAction(taskId, commentId);
@@ -41,7 +44,9 @@ export function Comments({ taskId, comments }: { taskId: string; comments: TaskC
       } catch {
         setFailure("Couldn't delete the comment");
       }
+      setDeleting(null);
     });
+  };
 
   return (
     <div className="space-y-3">
@@ -55,14 +60,18 @@ export function Comments({ taskId, comments }: { taskId: string; comments: TaskC
               <div className="mb-1 flex items-center gap-2 text-xs text-muted">
                 <span className="font-medium text-fg">{c.author}</span>
                 <time dateTime={c.created_at}>{formatWhen(c.created_at)}</time>
-                <button
-                  type="button"
-                  onClick={() => remove(c.id)}
-                  disabled={pending}
-                  className="ml-auto hover:text-danger focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
-                >
-                  Delete
-                </button>
+                <span className="ml-auto">
+                  <PendingButton
+                    type="button"
+                    onClick={() => remove(c.id)}
+                    pending={pending && deleting === c.id}
+                    pendingText="Deleting…"
+                    disabled={pending}
+                    className="hover:text-danger focus-visible:outline-2 focus-visible:outline-accent"
+                  >
+                    Delete
+                  </PendingButton>
+                </span>
               </div>
               <CommentText body={c.body} />
             </li>
@@ -81,9 +90,9 @@ export function Comments({ taskId, comments }: { taskId: string; comments: TaskC
           className="w-full rounded border border-border bg-surface px-2 py-1 text-sm"
         />
         <div className="flex items-center gap-3">
-          <button disabled={adding} className="rounded bg-accent px-3 py-1 text-sm font-medium text-white disabled:opacity-50 dark:text-black">
-            {adding ? "Adding…" : "Comment"}
-          </button>
+          <PendingButton pending={adding} pendingText="Adding…" className="rounded bg-accent px-3 py-1 text-sm font-medium text-white dark:text-black">
+            Comment
+          </PendingButton>
           <p role="alert" className="text-xs text-danger">
             {failure ?? (added && !added.ok ? added.message : null)}
           </p>
