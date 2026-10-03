@@ -21,7 +21,7 @@ type Refusal = Extract<GithubAccess, { allowed: false }>["refusal"];
 export interface PrSync {
   sync: SyncState;
   fetched_at: string | null;
-  /** A GitHub failure reason (the last attempt failed), or not_linked / company (served nothing: see prSection). */
+  /** A GitHub failure reason (the last attempt failed), or not_linked (served nothing: see prSection). */
   reason: string | null;
   /** The last failure's redacted message, clipped. */
   message?: string;
@@ -46,16 +46,15 @@ export interface PrInputs {
 /**
  * A task's PRs for get_task, from snapshots only (this never calls GitHub). Each entry carries the overview and the
  * sync status from `syncStatus`. Read-time guard: stored `prs` can outlive the link that allowed them, so when the PR's
- * repo isn't linked to a personal project the snapshot is not served: overview null and
- * `sync: { sync: "never", reason: "not_linked" | "company" }`.
- * Returns undefined (section left out) when the task has no PRs or its project is a company one.
+ * repo isn't linked to a project the snapshot is not served: overview null and
+ * `sync: { sync: "never", reason: "not_linked" }`.
+ * Returns undefined (section left out) when the task has no PRs.
  */
 export function prSection(
   task: Pick<Task, "prs">,
-  project: { context: string } | undefined,
   { snapshots, access }: PrInputs,
 ): PrEntry[] | undefined {
-  if (!task.prs.length || project?.context === "company") return undefined;
+  if (!task.prs.length) return undefined;
   return task.prs.map((ref) => {
     const parsed = parsePrRef(ref);
     const url = parsed
@@ -91,7 +90,7 @@ function refusalOf(access: GithubAccess | undefined): Refusal | undefined {
 
 /**
  * PR entries for many tasks at once (task lists, chips): one snapshot read per distinct PR and one access check per
- * distinct repo, database only, never GitHub. Tasks without a PR section (none, or a company project) are absent from
+ * distinct repo, database only, never GitHub. Tasks without a PR section (none) are absent from
  * the map. Cost: one indexed read per distinct PR of the listed tasks; only tasks that have `prs` are touched.
  */
 export async function tasksGithub(
@@ -101,8 +100,7 @@ export async function tasksGithub(
   const parents = lookup(ws.milestones, ws.projects);
   const withProject = tasks
     .filter((t) => t.prs.length)
-    .map((task) => ({ task, project: lineage(task, parents).project }))
-    .filter(({ project }) => project?.context !== "company");
+    .map((task) => ({ task, project: lineage(task, parents).project }));
   const refs = [...new Set(withProject.flatMap(({ task }) => task.prs))];
   const repos = [...new Set(refs.flatMap((ref) => parsePrRef(ref)?.repo ?? []))];
   const [snapshots, accesses] = await Promise.all([
@@ -111,8 +109,8 @@ export async function tasksGithub(
   ]);
   const inputs = { snapshots: new Map(snapshots), access: new Map(accesses) };
   const out = new Map<string, PrEntry[]>();
-  for (const { task, project } of withProject) {
-    const section = prSection(task, project, inputs);
+  for (const { task } of withProject) {
+    const section = prSection(task, inputs);
     if (section) out.set(task.id, section);
   }
   return out;

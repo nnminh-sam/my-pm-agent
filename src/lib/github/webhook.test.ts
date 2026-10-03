@@ -407,12 +407,16 @@ describe.each(backends)("POST /api/github/webhook on the $name backend", (backen
     expect(await repo.getGithubSnapshot("pr:me/app#22")).toBeNull();
   });
 
-  it("an unlinked repo and a company repo get 204 with nothing stored", async () => {
-    await send(delivery("pull_request", prEvent("opened", ghPull(1), "stranger/repo")), 204);
-    await send(delivery("pull_request_review", reviewEvent("bob", "approved", ghPull(1), "submitted", "stranger/repo")), 204);
+  it("PO-2.2 accepts webhook events for a project that was company", async () => {
     await send(delivery("pull_request", prEvent("closed", ghPull(2, { state: "closed", merged: true }), "corp/app")), 204);
     await send(delivery("pull_request_review", reviewEvent("bob", "approved", ghPull(2), "submitted", "Corp/App")), 204);
-    for (const key of ["pr:stranger/repo#1", "repo:stranger/repo", "pr:corp/app#2", "repo:corp/app"]) {
+    expect((await repo.getGithubSnapshot("pr:corp/app#2"))?.data).toMatchObject({ number: 2 });
+  });
+
+  it("PO-2.3 an unlinked repo gets 204 with nothing stored", async () => {
+    await send(delivery("pull_request", prEvent("opened", ghPull(1), "stranger/repo")), 204);
+    await send(delivery("pull_request_review", reviewEvent("bob", "approved", ghPull(1), "submitted", "stranger/repo")), 204);
+    for (const key of ["pr:stranger/repo#1", "repo:stranger/repo"]) {
       expect(await repo.getGithubSnapshot(key)).toBeNull();
     }
   });

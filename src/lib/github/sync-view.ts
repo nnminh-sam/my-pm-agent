@@ -6,7 +6,7 @@ import { GITHUB_SNAPSHOT_KEY } from "../types";
 import type { SyncState, SyncStatus } from "./sync";
 
 /** Why a view shows nothing from GitHub although no call failed: see Refused in ./pull.ts. */
-export type SyncRefusal = "invalid" | "not_linked" | "company";
+export type SyncRefusal = "invalid" | "not_linked";
 
 /** A sync status the browser may hold: SyncStatus (already redacted, JSON-safe) plus an optional refusal. */
 export interface BadgeSync extends SyncStatus {
@@ -46,7 +46,6 @@ const REASON_TEXT = {
 const REFUSAL_TEXT: Record<SyncRefusal, string> = {
   invalid: "Not a GitHub pull request or repo",
   not_linked: "Repo isn't linked to this project",
-  company: "Company projects don't read GitHub",
 };
 
 /** `2026-09-29 14:05 UTC`: fixed zone and format, so server and client agree. */

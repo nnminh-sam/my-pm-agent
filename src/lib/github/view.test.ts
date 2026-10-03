@@ -38,9 +38,8 @@ describe("loadPrView", () => {
     expect(JSON.stringify(v)).not.toContain(TOKEN);
   });
 
-  it("maps a refusal to a never-synced status with the refusal", async () => {
+  it("PO-2.3 maps a refusal to a never-synced status with the refusal", async () => {
     const gh = down();
-    expect((await loadPrView("corp/app#1", gh.options)).sync).toMatchObject({ sync: "never", refusal: "company" });
     expect((await loadPrView("nobody/x#1", gh.options)).sync).toMatchObject({ refusal: "not_linked" });
     expect(gh.calls).toHaveLength(0);
   });

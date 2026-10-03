@@ -117,7 +117,7 @@ test("PF-1.2 a pending inline action disables its control with aria-busy and a s
   // Remove a repository.
   await open(page, "/projects/E2E");
   await slowActions(page);
-  const remove = page.getByRole("button", { name: "Remove e2e/web" });
+  const remove = page.getByRole("button", { name: "Remove gitlab.com/e2e/web" });
   await remove.click();
   await expectPending(remove);
   await expect(remove).toHaveCount(0);
