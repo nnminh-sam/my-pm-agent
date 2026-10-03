@@ -199,6 +199,21 @@ test("PF-2.1 a slow navigation shows the loading skeleton in the page area with 
   await expect(skeleton).toHaveCount(0);
 });
 
+for (const { from, link, to } of [
+  { from: "/projects", link: "E2E project", to: /\/projects\/E2E$/ },
+  { from: "/tasks/E2E-M1-T2", link: "First task", to: /\/tasks\/E2E-M1-T1$/ },
+]) {
+  test(`PF-2.1 a slow navigation within a section (${from} → ${link}) shows the loading skeleton`, async ({ page }) => {
+    await open(page, from);
+    await slowNavigations(page);
+    await page.getByRole("main").getByRole("link", { name: link }).first().click();
+    const skeleton = page.locator("main [data-page-skeleton]");
+    await expect(skeleton).toBeVisible();
+    await page.waitForURL(to);
+    await expect(skeleton).toHaveCount(0);
+  });
+}
+
 test("PF-2.2 a slow navigation shows the top progress bar until the new page shows", async ({ page }) => {
   await open(page, "/");
   await slowNavigations(page);

@@ -13,8 +13,9 @@ async function main() {
   await createProject({ title: "GitHub project", code: "GH", context: "personal", repos: ["github.com/e2e/synced"] });
   await createMilestone({ title: "E2E milestone", project: "E2E" });
   await createTasks([
-    { title: "First task", milestone: "E2E-M1", estimate: 4 },
-    { title: "Second task", milestone: "E2E-M1", estimate: 2 },
+    { title: "First task", milestone: "E2E-M1", estimate: 4, ref: "first" },
+    // A dependency link, so a task page links to another task (PF-2.1 within a section).
+    { title: "Second task", milestone: "E2E-M1", estimate: 2, depends_on: ["first"] },
   ]);
   for (const body of ["comment one", "comment two", "comment three"]) await addComment("E2E-M1-T1", body, "you");
   const outcome = await signUp({ email: E2E_USER.email, password: E2E_USER.password, confirm: E2E_USER.password });
