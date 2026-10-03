@@ -84,6 +84,8 @@ describe("loadProjectPrs", () => {
     const g = gh();
     const prs = await loadProjectPrs(await project("CO"), g.options);
     expect(prs?.sections).toHaveLength(1);
+    expect(prs?.sections[0].view.sync.sync).toBe("synced");
+    expect(g.calls).toHaveLength(1);
   });
 
   it("no repos, or no github.com repo, means no section and no calls", async () => {

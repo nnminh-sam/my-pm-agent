@@ -449,7 +449,10 @@ describe.each(backends)("$name backend", (backend) => {
       await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
       await repo.createMilestone({ title: "M", project: "CO" });
       const [corp] = await repo.createTasks([{ title: "Review", milestone: "CO-M1" }]);
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
       expect((await repo.updateTask(corp.id, { prs: ["corp/app#5"] })).prs).toEqual(["corp/app#5"]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
     });
 
     it("re-checks PRs when a task moves to another milestone", async () => {

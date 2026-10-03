@@ -228,7 +228,7 @@ export function registerPmServer(server: McpServer) {
     async ({ id }) =>
       run(async () => {
         const [task, ws] = await Promise.all([getTask(id), loadWorkspace()]);
-        const [comments, pull_requests] = await Promise.all([listComments(task.id), taskGithub(task, ws)]);
+        const [comments, pull_requests] = await Promise.all([listComments(task.id), taskGithub(task)]);
         return json({
           ...taskRow(task, ws, scheduleFor(ws)),
           created: task.created,

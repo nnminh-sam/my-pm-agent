@@ -410,7 +410,7 @@ describe.each(backends)("POST /api/github/webhook on the $name backend", (backen
   it("PO-2.2 accepts webhook events for a project that was company", async () => {
     await send(delivery("pull_request", prEvent("closed", ghPull(2, { state: "closed", merged: true }), "corp/app")), 204);
     await send(delivery("pull_request_review", reviewEvent("bob", "approved", ghPull(2), "submitted", "Corp/App")), 204);
-    expect((await repo.getGithubSnapshot("pr:corp/app#2"))?.data).toMatchObject({ number: 2 });
+    expect((await repo.getGithubSnapshot("pr:corp/app#2"))?.data).toMatchObject({ number: 2, state: "merged", reviewers: expect.arrayContaining([{ login: "bob", state: "approved" }]) });
   });
 
   it("PO-2.3 an unlinked repo gets 204 with nothing stored", async () => {

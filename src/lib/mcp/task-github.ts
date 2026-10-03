@@ -6,16 +6,14 @@ import {
   type SyncState,
 } from "../github/sync";
 import type { PrOverview } from "../github/overview";
-import { lineage, lookup } from "../hierarchy";
 import {
   getGithubSnapshot,
   githubRepoAccess,
   type GithubAccess,
-  type Workspace,
 } from "../repo";
 import type { GithubSnapshot, Task } from "../types";
 
-/** Why a PR shows no data beyond the GitHub failure reasons: its repo isn't (or no longer) linked to a personal project. */
+/** Why a PR shows no data beyond the GitHub failure reasons: its repo isn't (or no longer) linked to a project. */
 type Refusal = Extract<GithubAccess, { allowed: false }>["refusal"];
 
 export interface PrSync {
@@ -95,13 +93,9 @@ function refusalOf(access: GithubAccess | undefined): Refusal | undefined {
  */
 export async function tasksGithub(
   tasks: Task[],
-  ws: Pick<Workspace, "milestones" | "projects">,
 ): Promise<Map<string, PrEntry[]>> {
-  const parents = lookup(ws.milestones, ws.projects);
-  const withProject = tasks
-    .filter((t) => t.prs.length)
-    .map((task) => ({ task, project: lineage(task, parents).project }));
-  const refs = [...new Set(withProject.flatMap(({ task }) => task.prs))];
+  const withPrs = tasks.filter((t) => t.prs.length);
+  const refs = [...new Set(withPrs.flatMap((task) => task.prs))];
   const repos = [...new Set(refs.flatMap((ref) => parsePrRef(ref)?.repo ?? []))];
   const [snapshots, accesses] = await Promise.all([
     Promise.all(refs.map(async (ref) => [prKey(ref), await getGithubSnapshot(prKey(ref))] as const)),
@@ -109,7 +103,7 @@ export async function tasksGithub(
   ]);
   const inputs = { snapshots: new Map(snapshots), access: new Map(accesses) };
   const out = new Map<string, PrEntry[]>();
-  for (const { task } of withProject) {
+  for (const task of withPrs) {
     const section = prSection(task, inputs);
     if (section) out.set(task.id, section);
   }
@@ -119,7 +113,6 @@ export async function tasksGithub(
 /** Reads the snapshots and repo access for a task's PRs (database only) and assembles the section. */
 export async function taskGithub(
   task: Task,
-  ws: Pick<Workspace, "milestones" | "projects">,
 ) {
-  return (await tasksGithub([task], ws)).get(task.id);
+  return (await tasksGithub([task])).get(task.id);
 }

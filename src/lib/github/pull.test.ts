@@ -204,7 +204,7 @@ describe.each(backends)("pull path on the $name backend", (backend) => {
       }
       // Also without an injected fetch: the global one is never reached.
       expect(await pullPr("stranger/repo#1")).toMatchObject({ allowed: false });
-      for (const bad of ["corp", "../x#1", "gitlab.com/me/app#1"]) expect(await pullPr(bad, opts())).toMatchObject({ allowed: false, refusal: "invalid" });
+      for (const bad of ["corp/app", "../x#1", "gitlab.com/me/app#1"]) expect(await pullPr(bad, opts())).toMatchObject({ allowed: false, refusal: "invalid" });
       expect(await pullRepoOpenPrs("gitlab.com/me/app", opts())).toMatchObject({ allowed: false, refusal: "invalid" });
       expect(gh.state.calls).toHaveLength(0);
       expect(spy).not.toHaveBeenCalled();
@@ -290,7 +290,7 @@ describe.each(backends)("pull path on the $name backend", (backend) => {
     tick(FRESH_MS);
     expect(await pullPr("me/later#9", opts())).toMatchObject({ allowed: true, sync: { sync: "synced" } });
 
-    await repo.updateProject("LT", { context: "personal", repos: [] });
+    await repo.updateProject("LT", { repos: [] });
     gh.state.calls = [];
     tick(FRESH_MS);
     expect(await pullPr("me/later#9", opts({ force: true }))).toMatchObject({ allowed: false, refusal: "not_linked" });

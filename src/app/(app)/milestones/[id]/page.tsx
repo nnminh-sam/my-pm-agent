@@ -25,7 +25,7 @@ export default async function MilestonePage({ params }: { params: Promise<{ id: 
   const s = milestoneSummary(milestone, ws, plan);
   const { project } = milestoneEffective(milestone, ws);
   const tasks = ws.tasks.filter((t) => t.milestone === milestone.id);
-  const prs = await tasksGithub(tasks, ws);
+  const prs = await tasksGithub(tasks);
   const now = new Date();
 
   return (
