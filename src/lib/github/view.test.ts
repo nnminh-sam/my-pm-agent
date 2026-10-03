@@ -14,7 +14,7 @@ beforeAll(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "my-pm-view-"));
   setRepository(new FileRepository(new FsStore(dir)));
   await repo.createProject({ title: "Mine", code: "ME", repos: ["github.com/me/app"] });
-  await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
+  await repo.createProject({ title: "Corp", code: "CO", repos: ["github.com/corp/app"] });
 });
 afterAll(async () => {
   setRepository(undefined);
@@ -38,7 +38,7 @@ describe("loadPrView", () => {
     expect(JSON.stringify(v)).not.toContain(TOKEN);
   });
 
-  it("PO-2.2 serves a PR view for a project that was company", async () => {
+  it("PO-2.2 serves a PR view for a project whose repo is linked", async () => {
     const f = (async (input: string | URL | Request) => {
       if (String(input).includes("/reviews")) return new Response("[]");
       return new Response(

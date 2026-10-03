@@ -30,7 +30,6 @@ import {
   MilestoneStatus,
   Priority,
   Project,
-  ProjectContext,
   ProjectStatus,
   Settings,
   SettingsPatch,
@@ -136,7 +135,6 @@ export const NewProject = z.object({
   priority: Priority.optional().describe("Default for its milestones and tasks (P2 if omitted)."),
   deadline: dateStr.optional().describe("Applies to every task in the project."),
   status: ProjectStatus.optional(),
-  context: ProjectContext.optional().describe("personal (default) or company: company projects keep only metadata and links."),
   repos: z
     .array(z.string())
     .optional()
@@ -151,7 +149,6 @@ export const ProjectPatch = z.object({
   priority: Priority.optional(),
   deadline: dateStr.nullable().optional(),
   status: ProjectStatus.optional().describe("on_hold / done / cancelled take the project's tasks off the schedule."),
-  context: ProjectContext.optional(),
   repos: z.array(z.string()).optional().describe("Replaces its git remotes (any form; stored normalized)."),
   detectors: z
     .array(z.string())
@@ -328,7 +325,7 @@ export async function getTask(ref: string): Promise<Task> {
 export const MAX_COMMENT_LENGTH = 10_000;
 
 /**
- * Appends a plain-text comment to a task (any project, personal or company). The body is kept verbatim apart from
+ * Appends a plain-text comment to a task. The body is kept verbatim apart from
  * trimming: no markdown, no reference resolution, no escaping (rendering escapes it).
  */
 export async function addComment(taskRef: string, body: string, author: CommentAuthor): Promise<TaskComment> {
@@ -600,7 +597,6 @@ export async function createProject(input: NewProject): Promise<Project> {
     status: input.status ?? "active",
     priority: input.priority ?? "P2",
     deadline: input.deadline,
-    context: input.context ?? "personal",
     repos,
     detectors: [],
     created: todayIn(settings.timezone),
@@ -619,7 +615,7 @@ export async function updateProject(ref: string, patch: ProjectPatch): Promise<P
   if (patch.priority !== undefined) next.priority = patch.priority;
   if (patch.deadline !== undefined) next.deadline = patch.deadline ?? undefined;
   if (patch.status !== undefined) next.status = patch.status;
-  if (patch.context !== undefined) next.context = patch.context;
+
   if (patch.detectors !== undefined) next.detectors = normalizeDetectors(patch.detectors);
   if (patch.repos !== undefined) {
     next.repos = normalizeRepos(patch.repos);

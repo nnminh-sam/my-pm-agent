@@ -9,7 +9,6 @@ const pma: Project = {
   title: "PM app",
   status: "active",
   priority: "P1",
-  context: "personal",
   repos: [],
   detectors: [],
   created: "2026-09-01",

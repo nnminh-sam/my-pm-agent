@@ -134,14 +134,14 @@ describe("006_lifecycle", { timeout: 30_000 }, () => {
       insert into milestones (id, code, number, title, status, project, created) values ('${newId()}', 'PMA-M1', 1, 'Auth', 'done', '${project}', '2026-09-27');
     `);
     expect((await migrate(session, MIGRATIONS))[0]).toBe("006_lifecycle");
-    expect(await rows("select context, playbook, repos, detectors from projects")).toEqual([
-      { context: "personal", playbook: null, repos: [], detectors: [] },
+    expect(await rows("select playbook, repos, detectors from projects")).toEqual([
+      { playbook: null, repos: [], detectors: [] },
     ]);
     expect(await rows("select stage, checks, deployments from milestones")).toEqual([{ stage: null, checks: {}, deployments: {} }]);
 
     setRepository(new PgRepository(db));
     const ws = await repo.loadWorkspace();
-    expect(ws.projects[0]).toMatchObject({ code: "PMA", context: "personal", repos: [], detectors: [] });
+    expect(ws.projects[0]).toMatchObject({ code: "PMA", repos: [], detectors: [] });
     expect(ws.milestones[0]).toMatchObject({ code: "PMA-M1", status: "done", checks: {}, deployments: {} });
     expect(ws.milestones[0].stage).toBeUndefined();
     expect(ws.playbooks).toEqual([]);
@@ -181,5 +181,54 @@ describe("007_github", { timeout: 30_000 }, () => {
     // Deleting a task (repo.ts never does yet) takes its comments with it.
     await session.exec(`delete from tasks where id = '${task}'`);
     expect(await rows("select task_id from task_comments")).toEqual([{ task_id: other }]);
+  });
+});
+
+describe("008_drop_project_context", { timeout: 30_000 }, () => {
+  it("PO-1.2 (a) refuses to run if any project is company, leaving the column", async () => {
+    const { session, rows } = await databaseBefore("008");
+    const p1 = newId();
+    const p2 = newId();
+    await session.exec(`
+      insert into projects (id, code, title, created, context) values
+      ('${p1}', 'P1', 'Personal', '2026-09-27', 'personal'),
+      ('${p2}', 'P2', 'Company', '2026-09-27', 'company');
+    `);
+    await expect(migrate(session, MIGRATIONS)).rejects.toThrow(/company/i);
+    const after = await rows("select id, context from projects order by code");
+    expect(after).toEqual([{ id: p1, context: "personal" }, { id: p2, context: "company" }]);
+    const cols = await rows("select column_name from information_schema.columns where table_name = 'projects' and column_name = 'context'");
+    expect(cols.length).toBe(1);
+    const migs = await rows("select version from schema_migrations where version = '008_drop_project_context'");
+    expect(migs.length).toBe(0);
+  });
+
+  it("PO-1.2 (b) succeeds with only personal projects: column is dropped, row survives, PgRepository loads", async () => {
+    const { session, db, rows } = await databaseBefore("008");
+    const p1 = newId();
+    await session.exec(`insert into projects (id, code, title, created, context) values ('${p1}', 'P1', 'Personal', '2026-09-27', 'personal');`);
+    await migrate(session, MIGRATIONS);
+    const cols = await rows("select column_name from information_schema.columns where table_name = 'projects' and column_name = 'context'");
+    expect(cols.length).toBe(0);
+    const projs = await rows("select id from projects");
+    expect(projs).toEqual([{ id: p1 }]);
+    const repoInst = new PgRepository(db);
+    const all = await repoInst.loadAll();
+    expect(all.projects.length).toBe(1);
+  });
+
+  it("PO-1.2 (c) deploy-first window: new code via PgRepository can create, update, and load projects while column exists", async () => {
+    const { db, rows } = await databaseBefore("008");
+    const repoInst = new PgRepository(db);
+    setRepository(repoInst);
+    const p = await repo.createProject({ title: "Deploy First", code: "DF" });
+    await repo.updateProject(p.id, { title: "Updated DF" });
+    const loaded = await repo.getProject(p.id);
+    expect(loaded?.title).toBe("Updated DF");
+
+    // Inserted rows got the column default ('personal') under the hood because the DB still has i
+    const raw = await rows(`select context from projects where id = '${p.id}'`);
+    expect(raw).toEqual([{ context: "personal" }]);
+    setRepository(undefined);
   });
 });

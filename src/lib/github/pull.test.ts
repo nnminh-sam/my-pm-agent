@@ -99,7 +99,7 @@ describe.each(backends)("pull path on the $name backend", (backend) => {
     setRepository(await backend.setup());
     clock = new Date("2026-09-29T10:00:00.000Z");
     await repo.createProject({ title: "Mine", code: "ME", repos: ["github.com/me/app", "github.com/me/lib"] });
-    await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
+    await repo.createProject({ title: "Corp", code: "CO", repos: ["github.com/corp/app"] });
   });
 
   it("first fetch fails: never synced, the reason stored, nothing thrown", async () => {
@@ -177,7 +177,7 @@ describe.each(backends)("pull path on the $name backend", (backend) => {
     expect(gh.state.calls).toHaveLength(1);
   });
 
-  it("PO-2.2 accepts a repo on a project that was company", async () => {
+  it("PO-2.2 accepts a repo on a project whose repo is linked", async () => {
     gh.state.calls = [];
     gh.state.respond = (url) => (url.includes("/reviews") ? json([]) : url.includes("/pulls/5") ? json(pull(5)) : json([]));
     for (const force of [false, true]) {

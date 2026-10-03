@@ -27,7 +27,7 @@ test("PO-2.2 the project page shows the PR section for a linked GitHub repo", as
   await expect(section.getByRole("button", { name: /Retry now|Retry after/ }).first()).toBeVisible();
 });
 
-test("PO-2.1 a task's page shows its PRs on a project that was company", async ({ page }) => {
+test("PO-2.1 a task's page shows its PRs on a project whose repo is linked", async ({ page }) => {
   await open(page, "/tasks/GH-M1-T1");
   const section = page.locator("section").filter({ has: page.getByRole("heading", { name: "Pull requests" }) });
   await expect(section).toBeVisible();

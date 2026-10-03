@@ -120,7 +120,7 @@ describe("checks", () => {
   });
 
   it("PO-3.2 get_lifecycle shows check text on every project", () => {
-    const acme = project("ACME", { context: "company", playbook: "PMA@1.0.0" });
+    const acme = project("ACME", { playbook: "PMA@1.0.0" });
     const view = only({ projects: [acme], milestones: [milestone(acme, 1, { stage: "spec" })] });
     expect(view.checks.find((c) => c.key === "spec.accepted")?.text).toEqual("Spec accepted, with acceptance criteria as a checklist");
     expect(view.next).toEqual({ kind: "check", check: "spec.accepted", skill: "spec", text: "spec.accepted: Spec accepted, with acceptance criteria as a checklist" });
