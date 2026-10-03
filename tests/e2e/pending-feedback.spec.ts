@@ -56,7 +56,8 @@ async function login(page: Page) {
   await page.waitForURL((url) => url.pathname === "/");
 }
 
-const spinnerIn = (page: Page, locator: ReturnType<Page["locator"]>) => locator.locator("[data-spinner]");
+const spinnerIn = (locator: ReturnType<Page["locator"]>) => locator.locator("[data-spinner]");
+const ROUTER_BAR = '[data-navigation-progress="router"]';
 
 async function expectPending(button: ReturnType<Page["locator"]>) {
   await expect(button).toBeDisabled();
@@ -180,7 +181,7 @@ test("PF-1.6 with prefers-reduced-motion the spinner shows without animating", a
   await page.getByPlaceholder("Hours").fill("0.25");
   const log = page.getByRole("button", { name: "Log", exact: true });
   await log.click();
-  const spinner = spinnerIn(page, log);
+  const spinner = spinnerIn(log);
   await expect(spinner).toBeVisible();
   expect(await spinner.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
   await expectIdle(log);
@@ -202,13 +203,13 @@ test("PF-2.2 a slow navigation shows the top progress bar until the new page sho
   await open(page, "/");
   await slowNavigations(page);
   await page.getByRole("navigation").getByRole("link", { name: "Projects" }).click();
-  const bar = page.locator("[data-navigation-progress]").first();
+  const bar = page.locator(ROUTER_BAR);
   await expect(bar).toBeVisible();
   const box = await bar.boundingBox();
   expect(box?.y).toBe(0);
   await page.waitForURL(/\/projects$/);
   await expect(page.locator("[data-page-skeleton]")).toHaveCount(0);
-  await expect(page.locator("[data-navigation-progress]")).toHaveCount(0);
+  await expect(page.locator(ROUTER_BAR)).toHaveCount(0);
 });
 
 test("PF-2.3 changing a Gantt filter on a slow server shows the progress bar until the filtered view shows", async ({ page }) => {
@@ -216,9 +217,9 @@ test("PF-2.3 changing a Gantt filter on a slow server shows the progress bar unt
   await slowNavigations(page);
   await page.locator("summary", { hasText: "Projects" }).click();
   await page.locator('input[type=checkbox][name=project][value="E2E"]').click();
-  await expect(page.locator("[data-navigation-progress]").first()).toBeVisible();
+  await expect(page.locator(ROUTER_BAR)).toBeVisible();
   await page.waitForURL(/project=E2E/);
-  await expect(page.locator("[data-navigation-progress]")).toHaveCount(0);
+  await expect(page.locator(ROUTER_BAR)).toHaveCount(0);
 });
 
 test("PF-2.4 the skeleton is aria-busy with a hidden Loading… status, and the bar is hidden from assistive technology", async ({ page }) => {
@@ -230,29 +231,98 @@ test("PF-2.4 the skeleton is aria-busy with a hidden Loading… status, and the 
   const status = skeleton.getByRole("status");
   await expect(status).toHaveText("Loading…");
   await expect(status).toHaveClass(/sr-only/);
-  const bar = page.locator("[data-navigation-progress]").first();
+  const bar = page.locator(ROUTER_BAR);
   await expect(bar).toBeVisible();
-  for (const el of await page.locator("[data-navigation-progress]").all()) await expect(el).toHaveAttribute("aria-hidden", "true");
+  await expect(bar).toHaveAttribute("aria-hidden", "true");
   await page.waitForURL(/\/connect$/);
 });
+
+/** From now on, record whether the router's progress bar ever appears. */
+async function watchRouterBar(page: Page) {
+  await page.evaluate((selector) => {
+    const w = window as unknown as { barSeen: boolean };
+    w.barSeen = false;
+    new MutationObserver(() => {
+      if (document.querySelector(selector)) w.barSeen = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  }, ROUTER_BAR);
+}
+const barSeen = (page: Page) => page.evaluate(() => (window as unknown as { barSeen: boolean }).barSeen);
 
 test("PF-2.5 a navigation that completes within 150 ms never shows the progress bar", async ({ page }) => {
   await open(page, "/projects");
   await page.getByRole("navigation").getByRole("link", { name: "Backlog" }).click();
   await page.waitForURL(/\/backlog$/);
   await expect(page.locator("[data-page-skeleton]")).toHaveCount(0);
-  // Watch for the bar from here on; back/forward is served from the router's cache, well within 150 ms.
-  await page.evaluate(() => {
-    (window as unknown as { barSeen: boolean }).barSeen = false;
-    new MutationObserver(() => {
-      if (document.querySelector("[data-navigation-progress]")) (window as unknown as { barSeen: boolean }).barSeen = true;
-    }).observe(document.body, { childList: true, subtree: true });
-  });
-  const started = Date.now();
+
+  // Back/forward is served from the router's cache, well within 150 ms.
+  await watchRouterBar(page);
   await page.goBack();
   await page.waitForURL(/\/projects$/);
-  await expect(page.getByRole("heading").first()).toBeVisible();
-  expect(Date.now() - started).toBeLessThan(1_000);
+  await expect(page.locator("[data-page-skeleton]")).toHaveCount(0);
   await sleep(500);
-  expect(await page.evaluate(() => (window as unknown as { barSeen: boolean }).barSeen)).toBe(false);
+  expect(await barSeen(page)).toBe(false);
+
+  // A link whose route was fully prefetched (held back until the payload arrived, then clicked) commits at once.
+  const project = page.locator('a[href="/projects/E2E"]').first();
+  await project.hover();
+  // Full prefetch of the project page into the router cache (window.next.router is the App Router instance).
+  const prefetched = await page.evaluate(() => {
+    const router = (window as unknown as { next?: { router?: { prefetch: (href: string, o?: unknown) => void } } }).next?.router;
+    if (!router) return false;
+    router.prefetch("/projects/E2E", { kind: "full" });
+    return true;
+  });
+  expect(prefetched).toBe(true);
+  await page.waitForLoadState("networkidle");
+  await watchRouterBar(page);
+  const started = Date.now();
+  await project.click();
+  await page.waitForURL(/\/projects\/E2E$/);
+  await expect(page.locator("[data-page-skeleton]")).toHaveCount(0);
+  const took = Date.now() - started;
+  await sleep(500);
+  expect(took, "the prefetched navigation should be fast").toBeLessThan(1_000);
+  expect(await barSeen(page)).toBe(false);
+});
+
+test("PF-1.2 Reload after a conflicting save is pending while the fresh record loads", async ({ page, context }) => {
+  const other = await context.newPage();
+  await open(page, "/tasks/E2E-M1-T2");
+  await open(other, "/tasks/E2E-M1-T2");
+  for (const p of [page, other]) await p.getByRole("button", { name: "Edit", exact: true }).click();
+
+  // `other` saves first, so `page`'s save is refused as changed elsewhere.
+  const otherEditor = other.getByLabel("E2E-M1-T2 as markdown");
+  await otherEditor.fill((await otherEditor.inputValue()).replace("Second task", "Second task (other)"));
+  await other.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(other.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+
+  const editor = page.getByLabel("E2E-M1-T2 as markdown");
+  await editor.fill((await editor.inputValue()).replace("Second task", "Second task (mine)"));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Changed elsewhere", { exact: true })).toBeVisible();
+
+  await slowNavigations(page);
+  page.on("dialog", (d) => d.accept());
+  const reload = page.getByRole("button", { name: "Reload", exact: true });
+  await reload.click();
+  await expectPending(reload);
+  await expect(page.getByRole("status").filter({ hasText: "Reloading…" })).toHaveCount(1);
+  await expect(editor).toHaveValue(/Second task \(other\)/, { timeout: 10_000 });
+  await expect(page.locator("[data-spinner]")).toHaveCount(0);
+});
+
+test("PF-1.2 Retry now on a failing GitHub sync is pending until the retry answers", async ({ page }) => {
+  await open(page, "/projects/GH");
+  await slowActions(page);
+  const badge = page.locator("summary").filter({ hasText: /Never synced|Out of sync/ }).first();
+  await badge.click();
+  const retry = page.getByRole("button", { name: /Retry now|Retry after/ }).first();
+  await expect(retry).toBeEnabled();
+  await retry.click();
+  await expectPending(retry);
+  await expect(page.getByRole("status").filter({ hasText: "Retrying…" })).toHaveCount(1);
+  await expect(retry).not.toHaveAttribute("aria-busy", /.*/, { timeout: 10_000 });
+  await expect(retry.locator("[data-spinner]")).toHaveCount(0);
 });

@@ -107,10 +107,13 @@ export function RecordEditor({
         ? "Load the latest version? Your edits are replaced; they were copied to the clipboard."
         : "Load the latest version? Your edits will be lost.";
     if (!confirm(message)) return;
-    setDismissed(state);
-    // Untouched, so the fresh `editable` from the refresh replaces it (see above).
-    setSession({ base: editable, text: editable });
-    startReload(() => router.refresh());
+    // One transition with the refresh: the "Changed elsewhere" panel (and its pending Reload) stays until the fresh
+    // text arrives. Untouched, so the fresh `editable` from the refresh replaces it (see above).
+    startReload(() => {
+      setDismissed(state);
+      setSession({ base: editable, text: editable });
+      router.refresh();
+    });
   };
 
   const submit = (e: React.FormEvent<HTMLFormElement>) => {

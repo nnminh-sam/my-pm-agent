@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
 import { usePathname, useSearchParams } from "next/navigation";
-import { finishNavigation, getNavigation, subscribeNavigation } from "@/lib/navigation-progress";
+import { getNavigation, skeletonMounted, subscribeNavigation, urlCommitted } from "@/lib/navigation-progress";
 
 /**
  * Pending feedback shared by every call site (docs/features/pending-feedback): a spinner, buttons that turn pending
@@ -90,9 +90,10 @@ function useDelayed(active: boolean) {
   return active && shown;
 }
 
-function Bar() {
+/** `kind` tells the router-driven bar from the skeleton's own one. */
+function Bar({ kind }: { kind: "router" | "skeleton" }) {
   return (
-    <div aria-hidden="true" data-navigation-progress="" className="pointer-events-none fixed inset-x-0 top-0 z-50 h-0.5 overflow-hidden bg-accent-soft">
+    <div aria-hidden="true" data-navigation-progress={kind} className="pointer-events-none fixed inset-x-0 top-0 z-50 h-0.5 overflow-hidden bg-accent-soft">
       <div className="h-full w-1/3 animate-[nav-progress_1.2s_ease-in-out_infinite] bg-accent motion-reduce:w-full motion-reduce:animate-none" />
     </div>
   );
@@ -100,16 +101,16 @@ function Bar() {
 
 /** A bar shown 150 ms after mount, for as long as it's mounted. */
 function DelayedBar() {
-  return useDelayed(true) ? <Bar /> : null;
+  return useDelayed(true) ? <Bar kind="skeleton" /> : null;
 }
 
 function NavigationWatcher() {
   const pathname = usePathname();
   const search = useSearchParams().toString();
-  // The new URL committed: the navigation is over (also on an error page, PF-2b).
-  useEffect(() => finishNavigation(), [pathname, search]);
+  // The new URL committed (also on an error page, PF-2b); a skeleton still showing ends it when it unmounts.
+  useEffect(() => urlCommitted(), [pathname, search]);
   const navigation = useSyncExternalStore(subscribeNavigation, getNavigation, () => null);
-  return useDelayed(navigation !== null) ? <Bar /> : null;
+  return useDelayed(navigation !== null) ? <Bar kind="router" /> : null;
 }
 
 /** The top progress bar for App Router navigations, started by onRouterTransitionStart (src/instrumentation-client.ts). */
@@ -123,6 +124,7 @@ export function NavigationProgress() {
 
 /** The page area while a route segment loads (loading.tsx): skeleton blocks, aria-busy, a "Loading…" status. */
 export function PageSkeleton() {
+  useEffect(() => skeletonMounted(), []);
   return (
     <div aria-busy="true" data-page-skeleton="" className="space-y-4">
       <DelayedBar />

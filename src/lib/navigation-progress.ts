@@ -6,6 +6,7 @@
 type Listener = () => void;
 
 let current: string | null = null;
+let skeletons = 0;
 let fallback: ReturnType<typeof setTimeout> | undefined;
 const listeners = new Set<Listener>();
 
@@ -32,6 +33,30 @@ export function finishNavigation() {
 }
 
 export const getNavigation = () => current;
+
+/**
+ * A loading skeleton is showing. With a prefetched loading state the URL commits before the page arrives, so the
+ * navigation only ends once no skeleton is left. Returns the unmount cleanup.
+ */
+export function skeletonMounted() {
+  skeletons++;
+  return () => {
+    skeletons--;
+    if (skeletons === 0) finishNavigation();
+  };
+}
+
+/**
+ * The new URL committed: the navigation is over unless a skeleton stands in for the page. The skeleton can commit a
+ * moment after the URL does, so look again after a short settle.
+ */
+export function urlCommitted() {
+  const target = current;
+  if (target === null) return;
+  setTimeout(() => {
+    if (current === target && skeletons === 0) finishNavigation();
+  }, 50);
+}
 
 export function subscribeNavigation(listener: Listener) {
   listeners.add(listener);

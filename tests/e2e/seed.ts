@@ -9,6 +9,8 @@ async function main() {
   if (process.env.PM_STORAGE !== "fs" || !process.env.PM_DATA_DIR) throw new Error("seed.ts only seeds a file workspace in PM_DATA_DIR");
   // Company projects never contact GitHub, so no page open reaches the network.
   await createProject({ title: "E2E project", code: "E2E", context: "company", repos: ["e2e/app", "e2e/web"] });
+  // Personal, so its repo is pulled (and fails against the dead GITHUB_API_URL): the sync badge offers Retry now.
+  await createProject({ title: "GitHub project", code: "GH", context: "personal", repos: ["github.com/e2e/synced"] });
   await createMilestone({ title: "E2E milestone", project: "E2E" });
   await createTasks([
     { title: "First task", milestone: "E2E-M1", estimate: 4 },

@@ -12,8 +12,10 @@ const env = {
   PM_DATA_DIR: process.env.E2E_DATA_DIR,
   JWT_SECRET: "e2e-jwt-secret-0123456789abcdef0123456789abcdef",
   PM_TIMEZONE: "UTC",
+  NEXT_DIST_DIR: ".next-e2e",
   // Never reach the real GitHub API from a test run.
-  GITHUB_TOKEN: "",
+  // A token is configured but the API is a dead port: every pull fails, so sync badges offer Retry now.
+  GITHUB_TOKEN: "e2e-fake-token",
   GITHUB_API_URL: "http://127.0.0.1:9",
 };
 
@@ -24,6 +26,8 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: "list",
+  // Actions are held for 1.5–3 s on purpose; leave room on a loaded machine.
+  expect: { timeout: 10_000 },
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: "retain-on-failure",
