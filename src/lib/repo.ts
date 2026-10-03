@@ -875,8 +875,7 @@ export const hashPlaybook = (definition: Playbook) => createHash("sha256").updat
  * nothing; different content under a stored version is refused, since versions never change.
  */
 export async function syncPlaybook(input: unknown, at: Date = new Date()): Promise<{ version: PlaybookVersion; created: boolean }> {
-  const parsed = Playbook.parse(input);
-  const definition = parsed;
+  const definition = Playbook.parse(input);
   const hash = hashPlaybook(definition);
   const ref = playbookRef(definition);
   const repository = getRepository();

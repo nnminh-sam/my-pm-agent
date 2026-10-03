@@ -122,14 +122,19 @@ describe("checks", () => {
   it("PO-3.2 get_lifecycle shows check text on every project", () => {
     const acme = project("ACME", { context: "company", playbook: "PMA@1.0.0" });
     const view = only({ projects: [acme], milestones: [milestone(acme, 1, { stage: "spec" })] });
-    const specCheck = view.checks.find((c) => c.key === "spec.accepted")!;
-    expect(specCheck.text).toBeDefined();
-    expect(view.next).toEqual({ kind: "check", check: "spec.accepted", env: undefined, skill: "spec", text: `spec.accepted: ${specCheck.text}` });
+    expect(view.checks.find((c) => c.key === "spec.accepted")?.text).toEqual("Spec accepted, with acceptance criteria as a checklist");
+    expect(view.next).toEqual({ kind: "check", check: "spec.accepted", skill: "spec", text: "spec.accepted: Spec accepted, with acceptance criteria as a checklist" });
   });
 });
 
 describe("next actions", () => {
   const pma = project("PMA", { detectors: ["migrations"] });
+
+  it("falls back to text: open when a check has no text", () => {
+    const m = milestone(pma, 1, { stage: "verify" });
+    const view = only({ projects: [pma], milestones: [m] });
+    expect(view.next).toEqual({ kind: "check", check: "verify.tests", skill: undefined, text: "verify.tests: open" });
+  });
 
   it("points at the first scheduled task while building", () => {
     const m = milestone(pma, 1, { stage: "build" });

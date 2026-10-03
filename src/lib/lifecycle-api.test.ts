@@ -169,6 +169,17 @@ describe("lifecycle MCP tools", () => {
     expect(await tool("reopen_check", { milestone: "PMA-M1", check: "release.rollback_plan" })).toMatchObject({ code: "PMA-M1" });
   });
 
+  it("PO-3.2 get_lifecycle shows check text on every project", async () => {
+    openMode();
+    await repo.createProject({ title: "ACME Corp", code: "ACME", context: "company" });
+    await tool("set_playbook_version", { project: "ACME", version: "PMA@1.0.0" });
+    await repo.createMilestone({ title: "M1", project: "ACME" });
+    const view = await tool("get_lifecycle", { project: "ACME" });
+    const m1 = (view.milestones as { checks: { key: string; text?: string }[] }[])[0];
+    const specCheck = m1.checks.find((c) => c.key === "spec.accepted");
+    expect(specCheck!.text).toEqual("Spec accepted, with acceptance criteria as a checklist");
+  });
+
   it("stores a playbook through the tool too, and explains unknown checks", async () => {
     openMode();
     expect(await tool("sync_playbook", { playbook: { ...pma, version: "1.1.0" } })).toMatchObject({ ref: "PMA@1.1.0", created: true });

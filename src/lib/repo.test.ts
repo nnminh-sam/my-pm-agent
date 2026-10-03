@@ -711,22 +711,24 @@ describe.each(backends)("$name backend", (backend) => {
       await expect(repo.syncPlaybook({ name: "LW" })).rejects.toThrow();
     });
 
-    it("PO-3.1 A playbook compiled from a layer named company is stored with its text", async () => {
+    it.each([
+      { name: "company", layers: [{ name: "sdlc", version: "1.0.0" }] },
+      { name: "ACME", layers: [{ name: "sdlc", version: "1.0.0" }, { name: "company", version: "1.0.0" }] },
+    ])("PO-3.1 A playbook named company or with a layer named company is stored with its text ($name)", async ({ name, layers }) => {
       const input = lw({
-        name: "ACME",
-        layers: [
-          { name: "sdlc", version: "1.0.0" },
-          { name: "company", version: "1.0.0" },
-        ],
+        name,
+        layers,
         environments: [{ name: "dev", db: "acme-dev", url: "https://dev.acme.test" }, { name: "prod" }],
       });
-      const { version } = await repo.syncPlaybook(input);
-      const d = version.definition;
-      expect(d.checks).toEqual((input as Playbook).checks);
-      expect(d.detectors).toEqual((input as Playbook).detectors);
-      expect(d.principles).toEqual((input as Playbook).principles);
-      expect(d.environments).toEqual((input as Playbook).environments);
-      expect(await backendRepo.getPlaybookVersion("ACME@1.0.0")).toEqual(version);
+      const expected = Playbook.parse(input);
+      const { version, created } = await repo.syncPlaybook(input);
+      expect(created).toBe(true);
+      expect(version.definition).toEqual(expected);
+      expect(await backendRepo.getPlaybookVersion(`${name}@1.0.0`)).toEqual(version);
+
+      const second = await repo.syncPlaybook(input);
+      expect(second.created).toBe(false);
+      expect(second.version).toEqual(version);
     });
 
     it("pins a project to a stored version and places its milestones on the lifecycle", async () => {

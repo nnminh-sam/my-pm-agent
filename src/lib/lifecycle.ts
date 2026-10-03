@@ -36,7 +36,7 @@ export interface CheckStatus {
   state: CheckState;
   env?: string;
   principle?: string;
-  /** The text of the check. */
+  /** What passing means, from the playbook; absent when the check has none. */
   text?: string;
   skill?: string;
   /** Why an auto check isn't passed, e.g. "2 of 5 tasks unestimated". */
