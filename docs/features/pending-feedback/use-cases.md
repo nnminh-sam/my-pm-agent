@@ -12,11 +12,14 @@ flowchart LR
   subgraph system [Web UI]
     pf1([PF-1 Run an action])
     pf2([PF-2 Open another page])
+    pf3([PF-3 Refresh the page])
   end
   user --- pf1
   user --- pf2
+  user --- pf3
   pf1 --- server
   pf2 --- server
+  pf3 --- server
 ```
 
 ## PF-1 Run an action
@@ -87,3 +90,30 @@ Where it applies:
 | PF-2.3 | Changing a Gantt filter while the server is slow shows the progress bar until the filtered view shows | e2e `tests/e2e/pending-feedback.spec.ts` |
 | PF-2.4 | The loading skeleton has `aria-busy="true"` and a visually hidden "Loading…" status; the progress bar is hidden from assistive technology | e2e `tests/e2e/pending-feedback.spec.ts` |
 | PF-2.5 | A navigation that completes within 150 ms never shows the progress bar | e2e `tests/e2e/pending-feedback.spec.ts` |
+
+## PF-3 Refresh the page
+
+- **Actor**: User · **Trigger**: clicks Refresh in the header (next to Log out), or presses `r`
+- **Preconditions**: an app page (`src/app/(app)/`) is loaded
+- **Main flow**:
+  1. The user clicks Refresh or presses `r` (bare key, focus not in a field).
+  2. The button turns pending (disabled, `aria-busy="true"`, spinner, visually hidden "Refreshing…" status) and the
+     server components of the current page are re-rendered (`router.refresh()` in a transition); no document reload.
+  3. The fresh data arrives; client state is kept: Gantt filters and the URL, scroll position, open panels, an open
+     record editor with its unsaved draft. The button goes back to idle and "Updated …" reads "just now".
+- **Alternative and error flows**:
+  - PF-3a Focus is in an input, textarea, select or contenteditable, or a modifier is held: `r` does nothing.
+  - PF-3b The user clicks or presses `r` again while pending: nothing is sent.
+  - PF-3c The refresh fails: the Next.js error page shows as it does today.
+- **Postconditions**: the page shows what is stored now; the user has lost no input. Polling and push are out of scope.
+
+The header also shows how old the data is ("Updated just now", "2m ago"), ticking every 30 s, and restarting after
+each refresh or navigation.
+
+| ID | Acceptance criterion | Tests |
+| --- | --- | --- |
+| PF-3.1 | Clicking Refresh shows data changed elsewhere without a document request; while it runs the button is disabled, `aria-busy="true"` and shows a spinner, afterwards none of these remain | e2e `tests/e2e/refresh.spec.ts` · unit `src/components/refresh-button.test.tsx` |
+| PF-3.2 | Pressing `r` does the same; the button has `aria-keyshortcuts="r"` and a title naming the shortcut | e2e `tests/e2e/refresh.spec.ts` · unit `src/components/refresh-button.test.tsx` |
+| PF-3.3 | A refresh keeps an unsaved record-editor draft, an open Gantt filter panel, the filters in the URL and page JS state | e2e `tests/e2e/refresh.spec.ts` |
+| PF-3.4 | `r` with focus in an input, textarea, select or contenteditable, or with Ctrl/Cmd/Alt, sends no request and types the character | e2e `tests/e2e/refresh.spec.ts` · unit `src/components/refresh-button.test.tsx` |
+| PF-3.5 | "Updated just now / 2m ago" is shown, ticks, and resets to "just now" after a refresh or navigation | e2e `tests/e2e/refresh.spec.ts` · unit `src/components/refresh-button.test.tsx` |
