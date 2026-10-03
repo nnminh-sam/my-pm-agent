@@ -36,7 +36,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <RefreshButton />
           </span>
           {jwt && (
-            <form action={logout} className=" flex items-center gap-2">
+            <form action={logout} className="flex items-center gap-2">
               {email && (
                 <span className="max-w-48 truncate text-xs text-muted" title={email}>
                   {email}

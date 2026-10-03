@@ -41,3 +41,10 @@ describe("isRefreshShortcut", () => {
     expect(press({ target: { tagName: "DIV", isContentEditable: true } })).toBe(false);
   });
 });
+
+describe("isRefreshShortcut ARIA widgets", () => {
+  it("ignores role=textbox / role=combobox ancestors", () => {
+    const inRole = { tagName: "DIV", closest: () => ({}) };
+    expect(press({ target: inRole })).toBe(false);
+  });
+});

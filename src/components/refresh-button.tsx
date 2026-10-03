@@ -21,9 +21,10 @@ export function isRefreshShortcut(e: {
   target: unknown;
 }): boolean {
   if (e.key !== "r" || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat || e.isComposing || e.defaultPrevented) return false;
-  const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
+  const t = e.target as { tagName?: string; isContentEditable?: boolean; closest?: (selector: string) => unknown } | null;
   const tag = t?.tagName?.toLowerCase();
-  return !(tag === "input" || tag === "textarea" || tag === "select" || t?.isContentEditable);
+  if (tag === "input" || tag === "textarea" || tag === "select" || t?.isContentEditable) return false;
+  return !t?.closest?.('[role="textbox"], [role="combobox"]');
 }
 
 function Refresh() {
@@ -48,15 +49,18 @@ function Refresh() {
   }, []);
 
   const refresh = () => startTransition(() => router.refresh());
+  const onRefresh = useRef(refresh);
+  useEffect(() => {
+    onRefresh.current = refresh;
+  });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isRefreshShortcut(e)) return;
       e.preventDefault();
-      refresh();
+      onRefresh.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

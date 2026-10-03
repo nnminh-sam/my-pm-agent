@@ -20,11 +20,11 @@ const refreshButton = (page: Page) => page.getByRole("button", { name: "Refresh"
 const TASK = "E2E-M1-T1";
 
 /** Change the task's title from another tab, the way an agent or a second window would. */
-async function rename(other: Page, from: string, to: string) {
+async function rename(other: Page, to: string) {
   await open(other, `/tasks/${TASK}`);
   await other.getByRole("button", { name: "Edit", exact: true }).click();
   const editor = other.getByLabel(`${TASK} as markdown`);
-  await editor.fill((await editor.inputValue()).replace(from, to));
+  await editor.fill((await editor.inputValue()).replace(/^title: .*$/m, `title: ${to}`));
   await other.getByRole("button", { name: "Save", exact: true }).click();
   await expect(other.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
 }
@@ -46,7 +46,7 @@ test("PF-3.1 clicking Refresh shows data changed elsewhere without a document re
   await open(page, `/tasks/${TASK}`);
   const docs = documentRequests(page);
   const other = await context.newPage();
-  await rename(other, "First task", "First task (fresh)");
+  await rename(other, "First task (fresh)");
   try {
     await expect(page.getByText("First task (fresh)")).toHaveCount(0);
     await page.route("**/*", async (route) => {
@@ -62,7 +62,7 @@ test("PF-3.1 clicking Refresh shows data changed elsewhere without a document re
     await expect(refreshButton(page).locator("[data-spinner]")).toHaveCount(0);
     expect(docs).toEqual([]);
   } finally {
-    await rename(other, "First task (fresh)", "First task");
+    await rename(other, "First task");
   }
 });
 
@@ -72,14 +72,14 @@ test("PF-3.2 pressing r refreshes like the button, and the button advertises it"
   await expect(refreshButton(page)).toHaveAttribute("title", /\br\b/);
   const docs = documentRequests(page);
   const other = await context.newPage();
-  await rename(other, "First task", "First task (key)");
+  await rename(other, "First task (key)");
   try {
     await page.locator("main").click({ position: { x: 5, y: 5 } });
     await page.keyboard.press("r");
     await expect(page.getByText("First task (key)").first()).toBeVisible();
     expect(docs).toEqual([]);
   } finally {
-    await rename(other, "First task (key)", "First task");
+    await rename(other, "First task");
   }
 });
 
@@ -92,7 +92,9 @@ test("PF-3.3 a refresh keeps an unsaved draft, an open filter panel and the filt
   await refreshButton(page).click();
   await expect(refreshButton(page)).toBeEnabled();
   await expect(editor).toHaveValue(draft);
-  await page.getByRole("button", { name: "Cancel", exact: true }).click().catch(() => {});
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
 
   await open(page, "/gantt?project=E2E");
   await page.locator("summary", { hasText: "Milestones" }).click();
