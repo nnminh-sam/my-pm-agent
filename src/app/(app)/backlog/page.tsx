@@ -54,7 +54,7 @@ export default async function BacklogPage({ searchParams }: { searchParams: Prom
   const parents = lookup(ws.milestones, ws.projects);
   const tasks = ws.tasks.filter((t) => showClosed || isOpen(t.status));
   // PR chips read snapshots only (one read per distinct PR), never GitHub.
-  const prs = await tasksGithub(tasks, ws);
+  const prs = await tasksGithub(tasks);
   const now = new Date();
   const milestones = ws.milestones
     .filter((m) => showClosed || isOpen(m.status))

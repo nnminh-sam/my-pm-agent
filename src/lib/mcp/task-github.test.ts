@@ -84,6 +84,7 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
     await repo.createProject({
       title: "Corp",
       code: "CO",
+      context: "company",
       repos: ["github.com/corp/app"],
     });
     await repo.createMilestone({ title: "M", project: "ME" });
@@ -97,7 +98,6 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
       prs: ["me/app#1", "me/app#2", "me/app#3"],
     });
     await repo.updateTask("CO-M1-T1", { prs: ["corp/app#9"] });
-    await repo.updateProject("CO", { context: "company" }); // the PR is now stale
     await repo.upsertGithubSnapshot({
       key: "pr:me/app#1",
       data: overview(1),
@@ -125,7 +125,7 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
   });
 
   const section = async (code: string) =>
-    taskGithub(await repo.getTask(code), await repo.loadWorkspace());
+    taskGithub(await repo.getTask(code));
 
   it("gives synced, out of sync and never-fetched PRs from snapshots, without calling GitHub", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -167,27 +167,27 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
     });
   });
 
-  it("tasksGithub (list chips) reads snapshots for many tasks in one pass, with 0 fetch calls", async () => {
+  it("PO-2.2 tasksGithub (list chips) reads snapshots for many tasks in one pass, with 0 fetch calls", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const ws = await repo.loadWorkspace();
-    const map = await tasksGithub(ws.tasks, ws);
+    const map = await tasksGithub(ws.tasks);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
     const mixed = await repo.getTask("ME-M1-T1");
     expect(map.get(mixed.id)?.map((e) => e.sync.sync)).toEqual(["synced", "out_of_sync", "never"]);
-    // Tasks without PRs and company tasks have no entry.
-    expect([...map.keys()]).toEqual([mixed.id]);
+    // Tasks without PRs have no entry; tasks in formerly company projects are included.
+    const coId = (await repo.getTask("CO-M1-T1")).id;
+    expect(new Set(map.keys())).toEqual(new Set([mixed.id, coId]));
+    const coEntry = map.get(coId)![0];
+    expect(coEntry.overview).not.toBeNull();
+    expect(coEntry.sync.sync).toBe("synced");
   });
 
-  it("leaves the section out for a task without PRs and for company projects", async () => {
+  it("leaves the section out for a task without PRs", async () => {
     expect(await section("ME-M1-T2")).toBeUndefined();
-    expect(await section("CO-M1-T1")).toBeUndefined();
   });
 
-  it("serves no overview once the project turned company or the repo was unlinked", async () => {
-    await repo.updateProject("ME", { context: "company" });
-    expect(await section("ME-M1-T1")).toBeUndefined();
-    await repo.updateProject("ME", { context: "personal" });
+  it("PO-2.2 serves an overview for a project that was company, but not for an unlinked repo", async () => {
     expect((await section("ME-M1-T1"))![0].overview).not.toBeNull();
 
     await repo.updateProject("ME", { repos: [] });
@@ -199,13 +199,6 @@ describe.each(backends)("taskGithub on the $name backend", (backend) => {
       reason: "not_linked",
     });
     expect(prs[0].url).toBe("https://github.com/me/app/pull/1");
-
-    // Stored only against a company project elsewhere: the repo is linked to company projects alone.
-    await repo.updateProject("CO", {
-      context: "company",
-      repos: ["github.com/me/app"],
-    });
-    expect((await section("ME-M1-T1"))![0].sync.reason).toBe("company");
   });
 
   it("taskContext stays free of GitHub data", async () => {

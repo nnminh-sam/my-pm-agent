@@ -177,23 +177,38 @@ describe.each(backends)("pull path on the $name backend", (backend) => {
     expect(gh.state.calls).toHaveLength(1);
   });
 
-  it("refuses company and unlinked repos: no call, nothing stored", async () => {
+  it("PO-2.2 accepts a repo on a project that was company", async () => {
+    gh.state.calls = [];
+    gh.state.respond = (url) => (url.includes("/reviews") ? json([]) : url.includes("/pulls/5") ? json(pull(5)) : json([]));
+    for (const force of [false, true]) {
+      expect(await pullPr("corp/app#5", opts({ force }))).toMatchObject({ allowed: true, key: "pr:corp/app#5", decision: { action: "fetch" } });
+      expect(await pullRepoOpenPrs("github.com/corp/app", opts({ force }))).toMatchObject({ allowed: true, decision: { action: "fetch" } });
+    }
+    expect(gh.state.calls).toEqual([
+      "http://gh.test/repos/corp/app/pulls/5",
+      "http://gh.test/repos/corp/app/pulls/5/reviews?per_page=100",
+      "http://gh.test/repos/corp/app/pulls?state=open&per_page=100",
+      "http://gh.test/repos/corp/app/pulls/5",
+      "http://gh.test/repos/corp/app/pulls/5/reviews?per_page=100",
+      "http://gh.test/repos/corp/app/pulls?state=open&per_page=100",
+    ]);
+  });
+
+  it("PO-2.3 refuses unlinked repos: no call, nothing stored", async () => {
     const spy = vi.spyOn(globalThis, "fetch");
     gh.state.calls = [];
     try {
       for (const force of [false, true]) {
-        expect(await pullPr("corp/app#5", opts({ force }))).toMatchObject({ allowed: false, key: "pr:corp/app#5", refusal: "company" });
-        expect(await pullRepoOpenPrs("github.com/corp/app", opts({ force }))).toMatchObject({ allowed: false, refusal: "company" });
         expect(await pullPr("stranger/repo#1", opts({ force }))).toMatchObject({ allowed: false, refusal: "not_linked" });
         expect(await pullRepoOpenPrs("stranger/repo", opts({ force }))).toMatchObject({ allowed: false, refusal: "not_linked" });
       }
       // Also without an injected fetch: the global one is never reached.
-      expect(await pullPr("corp/app#5")).toMatchObject({ allowed: false });
+      expect(await pullPr("stranger/repo#1")).toMatchObject({ allowed: false });
       for (const bad of ["corp/app", "../x#1", "gitlab.com/me/app#1"]) expect(await pullPr(bad, opts())).toMatchObject({ allowed: false, refusal: "invalid" });
       expect(await pullRepoOpenPrs("gitlab.com/me/app", opts())).toMatchObject({ allowed: false, refusal: "invalid" });
       expect(gh.state.calls).toHaveLength(0);
       expect(spy).not.toHaveBeenCalled();
-      for (const key of ["pr:corp/app#5", "repo:corp/app", "pr:stranger/repo#1", "repo:stranger/repo"]) {
+      for (const key of ["pr:stranger/repo#1", "repo:stranger/repo"]) {
         expect(await repo.getGithubSnapshot(key)).toBeNull();
       }
     } finally {
@@ -269,17 +284,15 @@ describe.each(backends)("pull path on the $name backend", (backend) => {
     await expect(repo.recordGithubFailure("pr:not a key", { last_attempt_at: "2026-09-29T10:45:00.000Z", last_error: down, retry_after: null })).rejects.toThrow();
   });
 
-  it("checks the link when reading: a repo moved to a company project stops being fetched", async () => {
+  it("PO-2.3 checks the link when reading: an unlinked repo stops being fetched", async () => {
     await repo.createProject({ title: "Later", code: "LT", repos: ["github.com/me/later"] });
     gh.state.respond = (url) => (url.includes("/reviews") ? json([]) : json(pull(9)));
     tick(FRESH_MS);
     expect(await pullPr("me/later#9", opts())).toMatchObject({ allowed: true, sync: { sync: "synced" } });
 
-    await repo.updateProject("LT", { context: "company" });
+    await repo.updateProject("LT", { repos: [] });
     gh.state.calls = [];
     tick(FRESH_MS);
-    expect(await pullPr("me/later#9", opts({ force: true }))).toMatchObject({ allowed: false, refusal: "company" });
-    await repo.updateProject("LT", { context: "personal", repos: [] });
     expect(await pullPr("me/later#9", opts({ force: true }))).toMatchObject({ allowed: false, refusal: "not_linked" });
     expect(gh.state.calls).toHaveLength(0);
   });

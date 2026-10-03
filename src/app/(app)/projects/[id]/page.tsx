@@ -75,12 +75,6 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       <Card className="space-y-3 px-5 py-4">
         <h2 className="text-xs font-medium tracking-wide text-muted uppercase">Repositories</h2>
         <RepoLinks project={project.id} repos={project.repos} />
-        {project.context === "company" && (
-          <p className="text-xs text-muted">
-            Company project: my_pm never contacts GitHub for it, so no pull requests are shown. Linked repos are still
-            used by local hooks.
-          </p>
-        )}
       </Card>
 
       <RepoPrs prs={prs} now={now} />

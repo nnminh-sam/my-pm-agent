@@ -68,7 +68,6 @@ describe("badgeView", () => {
     const base = { ...syncStatus(null) };
     const notLinked = badgeView({ ...base, refusal: "not_linked" }, now);
     expect(notLinked).toMatchObject({ tone: "danger", reason: "Repo isn't linked to this project", canRetry: false });
-    expect(badgeView({ ...base, refusal: "company" }, now).reason).toBe("Company projects don't read GitHub");
   });
 });
 

@@ -91,7 +91,7 @@ export const TaskPatch = z.object({
     .array(z.string())
     .optional()
     .describe(
-      "Pull requests this task covers, as GitHub URLs or owner/repo#N (stored as owner/repo#N). Replaces the list; [] clears it. Each repo must be linked to the task's project; company projects take none.",
+      "Pull requests this task covers, as GitHub URLs or owner/repo#N (stored as owner/repo#N). Replaces the list; [] clears it. Each repo must be linked to the task's project.",
     ),
   order: z.number().nullable().optional(),
   description: z.string().optional().describe("Replaces the markdown body."),
@@ -176,7 +176,7 @@ export function normalizeId(id: string, prefix: Prefix) {
 export class NotFoundError extends Error {}
 /** A write that clashes with what's stored (e.g. different content under a stored playbook version). */
 export class ConflictError extends Error {}
-/** A PR reference that can't be kept: malformed, an unlinked repo, or a company project. Its message says how to fix it. */
+/** A PR reference that can't be kept: malformed or an unlinked repo. Its message says how to fix it. */
 export class PrReferenceError extends Error {}
 
 const EXAMPLE: Record<CodeKind, string> = { project: "PMA", milestone: "PMA-M1", task: "PMA-M1-T3" };
@@ -786,15 +786,9 @@ function normalizePrs(prs: string[]): string[] {
 }
 
 /**
- * PR references only make sense on a personal project whose linked repos include each PR's repo. Company projects
- * never touch GitHub, so they take none; otherwise link the repo first (update_project repos).
+ * PR references only make sense on a project whose linked repos include each PR's repo; link the repo first (update_project repos).
  */
-function assertPrsFit(prs: string[], project: Pick<Project, "code" | "context" | "repos">, action: string) {
-  if (project.context === "company") {
-    throw new PrReferenceError(
-      `${action}: ${project.code} is a company project, which takes no PR references (they would need GitHub). Clear prs, or note the PR in a comment.`,
-    );
-  }
+function assertPrsFit(prs: string[], project: Pick<Project, "code" | "repos">, action: string) {
   for (const pr of prs) {
     const repo = pr.slice(0, pr.lastIndexOf("#"));
     if (!project.repos.includes(`github.com/${repo}`)) {
@@ -826,20 +820,16 @@ export async function recordGithubFailure(key: string, failure: GithubFailure): 
 
 export type GithubAccess =
   | { allowed: true }
-  | { allowed: false; refusal: "not_linked" | "company"; message: string };
+  | { allowed: false; refusal: "not_linked"; message: string };
 
 /**
- * Whether my_pm may contact GitHub about a repo (`owner/repo`): only when it's linked to at least one personal
- * project. Checked when data is read, not only when `prs` are written: a task's stored PRs can outlive the link
- * (a milestone moved, a project's repos or context changed).
+ * Whether my_pm may contact GitHub about a repo (`owner/repo`): only when it's linked to at least one project.
+ * Checked when data is read, not only when `prs` are written: a task's stored PRs can outlive the link
+ * (a milestone moved, or a project's repos changed).
  */
 export async function githubRepoAccess(repo: string): Promise<GithubAccess> {
   const projects = await getRepository().findProjectsByRepo(githubRemote(repo));
-  if (projects.some((p) => p.context === "personal")) return { allowed: true };
-  if (projects.length) {
-    const codes = projects.map((p) => p.code).join(", ");
-    return { allowed: false, refusal: "company", message: `${repo} is linked only to company projects (${codes}), which never contact GitHub.` };
-  }
+  if (projects.length) return { allowed: true };
   return { allowed: false, refusal: "not_linked", message: `${repo} isn't linked to any project. Link it with update_project (repos).` };
 }
 

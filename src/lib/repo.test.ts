@@ -445,20 +445,14 @@ describe.each(backends)("$name backend", (backend) => {
       await expect(repo.updateTask(bare.id, { prs: ["gh/site#1"] })).rejects.toThrow("It has no linked repos");
     });
 
-    it("refuses PRs on a company project and never contacts GitHub", async () => {
+    it("PO-2.1 accepts PRs on a project that was company", async () => {
+      await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
+      await repo.createMilestone({ title: "M", project: "CO" });
+      const [corp] = await repo.createTasks([{ title: "Review", milestone: "CO-M1" }]);
       const fetchSpy = vi.spyOn(globalThis, "fetch");
-      try {
-        await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
-        await repo.createMilestone({ title: "M", project: "CO" });
-        const [corp] = await repo.createTasks([{ title: "Review", milestone: "CO-M1" }]);
-        await expect(repo.updateTask(corp.id, { prs: ["corp/app#5"] })).rejects.toThrow(/CO is a company project/);
-        expect((await repo.getTask(corp.id)).prs).toEqual([]);
-        // Clearing is always fine.
-        expect((await repo.updateTask(corp.id, { prs: [] })).prs).toEqual([]);
-        expect(fetchSpy).not.toHaveBeenCalled();
-      } finally {
-        fetchSpy.mockRestore();
-      }
+      expect((await repo.updateTask(corp.id, { prs: ["corp/app#5"] })).prs).toEqual(["corp/app#5"]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
     });
 
     it("re-checks PRs when a task moves to another milestone", async () => {
@@ -554,12 +548,15 @@ describe.each(backends)("$name backend", (backend) => {
       expect((await backendRepo.getGithubSnapshot(key))?.fetched_at).toBe("2026-09-29T01:05:00.000Z");
     });
 
-    it("finds the projects linking a repo, and whether GitHub may be contacted for it", async () => {
+    it("PO-2.2 finds the projects linking a repo, and whether GitHub may be contacted for it", async () => {
       expect((await backendRepo.findProjectsByRepo("github.com/gh/site")).map((p) => p.code)).toEqual(["GH"]);
       expect((await backendRepo.findProjectsByRepo("github.com/corp/app")).map((p) => p.code)).toEqual(["CO"]);
       expect(await backendRepo.findProjectsByRepo("github.com/nobody/here")).toEqual([]);
       expect(await repo.githubRepoAccess("gh/site")).toEqual({ allowed: true });
-      expect(await repo.githubRepoAccess("corp/app")).toMatchObject({ allowed: false, refusal: "company", message: expect.stringContaining("CO") });
+      expect(await repo.githubRepoAccess("corp/app")).toEqual({ allowed: true });
+    });
+
+    it("PO-2.3 refuses a repo linked to no project", async () => {
       expect(await repo.githubRepoAccess("nobody/here")).toMatchObject({ allowed: false, refusal: "not_linked" });
     });
 

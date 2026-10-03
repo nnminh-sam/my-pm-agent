@@ -51,8 +51,8 @@ describe("SyncBadge", () => {
   });
 
   it("a refusal has no Retry now", () => {
-    const html = render({ ...syncStatus(null), refusal: "company" });
-    expect(html).toContain("Company projects don&#x27;t read GitHub");
+    const html = render({ ...syncStatus(null), refusal: "not_linked" });
+    expect(html).toContain("Repo isn&#x27;t linked to this project");
     expect(html).not.toContain("Retry now");
   });
 

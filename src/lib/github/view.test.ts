@@ -38,9 +38,35 @@ describe("loadPrView", () => {
     expect(JSON.stringify(v)).not.toContain(TOKEN);
   });
 
-  it("maps a refusal to a never-synced status with the refusal", async () => {
+  it("PO-2.2 serves a PR view for a project that was company", async () => {
+    const f = (async (input: string | URL | Request) => {
+      if (String(input).includes("/reviews")) return new Response("[]");
+      return new Response(
+        JSON.stringify({
+          number: 1,
+          title: "First",
+          body: "body",
+          state: "open",
+          draft: false,
+          merged: false,
+          merged_at: null,
+          milestone: null,
+          user: { login: "alice" },
+          assignees: [],
+          requested_reviewers: [],
+          created_at: "2026-09-29T09:00:00Z",
+          updated_at: "2026-09-29T09:00:00Z",
+        })
+      );
+    }) as typeof fetch;
+    const opts = { client: { fetch: f, token: TOKEN, baseUrl: "http://gh.test" } };
+    const v = await loadPrView("corp/app#1", opts);
+    expect(v.sync).toMatchObject({ sync: "synced" });
+    expect(v.data?.title).toBe("First");
+  });
+
+  it("PO-2.3 maps a refusal to a never-synced status with the refusal", async () => {
     const gh = down();
-    expect((await loadPrView("corp/app#1", gh.options)).sync).toMatchObject({ sync: "never", refusal: "company" });
     expect((await loadPrView("nobody/x#1", gh.options)).sync).toMatchObject({ refusal: "not_linked" });
     expect(gh.calls).toHaveLength(0);
   });
