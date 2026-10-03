@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { retryGithubSync } from "@/app/actions";
+import { PendingButton } from "@/components/pending";
 import { badgeView, retryFeedback, type BadgeSync, type BadgeTone } from "@/lib/github/sync-view";
 
 const TONE: Record<BadgeTone, string> = {
@@ -95,14 +96,16 @@ export function SyncBadge({
         </dl>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           {syncKey && !sync.refusal && (
-            <button
+            <PendingButton
               type="button"
               onClick={retry}
-              disabled={pending || !view.canRetry}
-              className="rounded border border-border px-2 py-0.5 hover:bg-bg focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+              pending={pending}
+              pendingText="Retrying…"
+              disabled={!view.canRetry}
+              className="rounded border border-border px-2 py-0.5 hover:bg-bg focus-visible:outline-2 focus-visible:outline-accent"
             >
-              {pending ? "Retrying…" : view.retryBlocked ?? "Retry now"}
-            </button>
+              {view.retryBlocked ?? "Retry now"}
+            </PendingButton>
           )}
           {view.state === "never" && url && (
             <a href={url} target="_blank" rel="noreferrer" className="text-accent hover:underline">

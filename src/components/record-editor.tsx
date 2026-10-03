@@ -1,9 +1,10 @@
 "use client";
 
-import { startTransition, useActionState, useEffect, useRef, useState } from "react";
+import { startTransition, useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveRecordAction, type SaveRecordState } from "@/app/actions";
 import { copyText } from "@/components/copy-code";
+import { PendingButton } from "@/components/pending";
 // Type-only: record-markdown.ts is server code.
 import type { RecordKind } from "@/lib/record-markdown";
 
@@ -70,6 +71,7 @@ export function RecordEditor({
   const result = state !== dismissed ? state : null;
 
   // A refresh brought newer text (Reload, or a revalidation after another action): an untouched session follows it.
+  const [reloading, startReload] = useTransition();
   const [seen, setSeen] = useState(editable);
   if (seen !== editable) {
     setSeen(editable);
@@ -108,7 +110,7 @@ export function RecordEditor({
     setDismissed(state);
     // Untouched, so the fresh `editable` from the refresh replaces it (see above).
     setSession({ base: editable, text: editable });
-    startTransition(() => router.refresh());
+    startReload(() => router.refresh());
   };
 
   const submit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -173,9 +175,9 @@ export function RecordEditor({
         <button type="button" onClick={cancel} disabled={pending} className={BUTTON}>
           Cancel
         </button>
-        <button type="submit" disabled={pending} className={PRIMARY}>
-          {pending ? "Saving…" : "Save"}
-        </button>
+        <PendingButton type="submit" pending={pending} pendingText="Saving…" className={PRIMARY}>
+          Save
+        </PendingButton>
       </div>
 
       {errors?.stale ? (
@@ -192,9 +194,9 @@ export function RecordEditor({
             >
               Copy my edits
             </button>
-            <button type="button" onClick={reload} className={BUTTON}>
+            <PendingButton type="button" onClick={reload} pending={reloading} pendingText="Reloading…" className={BUTTON}>
               Reload
-            </button>
+            </PendingButton>
             <span role="status" className="self-center text-xs text-muted">
               {copyNote}
             </span>

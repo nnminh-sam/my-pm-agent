@@ -39,7 +39,7 @@ describe("SyncBadge", () => {
 
   it("rate limited: Retry now disabled with the reset time", () => {
     const html = render(out("rate limit", new Date(Date.parse(now) + 600_000).toISOString()));
-    expect(html).toMatch(/<button[^>]*disabled/);
+    expect(html).toMatch(/<button[^>]*\sdisabled=""/);
     expect(html).toContain("Rate-limited until 2026-09-29 12:10 UTC");
   });
 

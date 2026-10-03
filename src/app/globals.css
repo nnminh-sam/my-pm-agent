@@ -118,3 +118,13 @@ body {
   border: 1px solid var(--border);
   padding: 0.3rem 0.6rem;
 }
+
+/* NavigationProgress: an indeterminate sweep across the top of the viewport. */
+@keyframes nav-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}

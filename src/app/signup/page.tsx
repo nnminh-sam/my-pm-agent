@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { signUp } from "@/app/actions";
-import { AuthCard, ErrorMessage, Field, ModeNotice, SubmitButton } from "@/components/auth-form";
+import { AuthCard, ErrorMessage, Field, ModeNotice, AuthSubmit } from "@/components/auth-form";
 import { authMode, safeNext } from "@/lib/auth";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@/lib/auth/password";
 import { signupStatus } from "@/lib/auth/users";
@@ -48,7 +48,7 @@ export default async function SignUpPage({ searchParams }: { searchParams: Promi
             />
             <Field name="confirm" label="Confirm password" type="password" required autoComplete="new-password" />
             <ErrorMessage code={error} />
-            <SubmitButton>Sign up</SubmitButton>
+            <AuthSubmit pendingText="Signing up…">Sign up</AuthSubmit>
           </form>
           <p className="mt-4 text-sm text-muted">Already have an account? {loginLink}</p>
         </>
