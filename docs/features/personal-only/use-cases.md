@@ -37,12 +37,12 @@ I create and update projects without a context, and no tool, page or export show
   - PO-1a File backend with a leftover `context:` key: the project loads normally (unknown key ignored), and the key is removed on the next write.
   - PO-1b Pre-change export imported: legacy exports containing `context` import cleanly without error.
   - PO-1c Migration run while any project still has `context = 'company'`: the migration raises an exception and aborts without altering the schema or data.
-- **Postconditions**: no project record in memory, on disk, in Postgres, or in tool output contains a `context` field.
+- **Postconditions**: no project record in memory, in Postgres, or in tool output contains a `context` field. On the file backend, an existing project file keeps a leftover `context:` until its next write.
 
 | ID | Acceptance criterion | Tests |
 | --- | --- | --- |
 | PO-1.1 | `create_project` and `update_project` have no `context` parameter, and `list_projects`, `get_project` and `get_lifecycle` return none | unit `src/lib/repo.test.ts` · unit `src/lib/lifecycle-api.test.ts` · unit `src/lib/mcp/server.test.ts` |
-| PO-1.2 | The migration drops `projects.context`, and refuses (changing nothing) while a project is still company | unit `src/lib/migrate.test.ts` · unit `src/lib/repo.test.ts` |
+| PO-1.2 | The migration drops `projects.context`, and refuses (changing nothing) while a project is still company | unit `src/lib/migrate.test.ts` |
 | PO-1.3 | On the file backend, a project file with a leftover `context:` key still loads, and loses the key on its next write | unit `src/lib/repo.test.ts` |
 | PO-1.4 | An export taken before the change still imports | unit `src/lib/repo.test.ts` |
 
@@ -55,8 +55,9 @@ A task takes PRs from any repo linked to its project. Pages and `get_task` show 
 - **Main flow**:
   1. The user associates PR references (e.g. `owner/repo#123`) with a task via `update_task` or the record editor.
   2. `assertPrsFit` checks that the repository is linked to the task's project; since every project supports GitHub, the PR reference is accepted.
-  3. When viewing the task (`get_task` or opening the page), `githubRepoAccess` confirms the repo is linked and pulls/syncs PR details.
-  4. When GitHub sends a webhook event for any linked repository, `githubRepoAccess` confirms the repo is linked and updates the snapshot.
+  3. When opening a task or project page, `githubRepoAccess` confirms the repo is linked and pulls fresh PR details from GitHub (a fresh snapshot under 60 s is reused).
+  4. When calling `get_task`, `githubRepoAccess` confirms the repo is linked and the tool reads stored snapshots only, never calling GitHub.
+  5. When GitHub sends a webhook event for any linked repository, `githubRepoAccess` confirms the repo is linked and updates the snapshot.
 - **Alternative and error flows**:
   - PO-2a PR repo not linked to project: `assertPrsFit` rejects the PR with `PrReferenceError` prompting the user to link the repository.
   - PO-2b GitHub access checked for unlinked repo: `githubRepoAccess` returns `{ allowed: false, refusal: "not_linked" }`; no GitHub API call is made, and webhooks acknowledge with 204 without storing data.
@@ -65,12 +66,12 @@ A task takes PRs from any repo linked to its project. Pages and `get_task` show 
 | ID | Acceptance criterion | Tests |
 | --- | --- | --- |
 | PO-2.1 | A PR from a repo linked to the task's project is accepted on every project | unit `src/lib/repo.test.ts` |
-| PO-2.2 | That PR is synced on page open and by the webhook | unit `src/lib/github/pull.test.ts` · unit `src/lib/github/webhook.test.ts` |
+| PO-2.2 | That PR is synced on page open and by the webhook | e2e `tests/e2e/personal-only.spec.ts` · unit `src/lib/github/pull.test.ts` · unit `src/lib/github/webhook.test.ts` |
 | PO-2.3 | A repo linked to no project is still refused (`not_linked`), with no GitHub call | unit `src/lib/repo.test.ts` · unit `src/lib/github/pull.test.ts` · unit `src/lib/github/webhook.test.ts` |
 
 ## PO-3 Playbooks stored whole
 
-A synced playbook keeps its check, principle and environment text, whatever its name or layers.
+A synced playbook keeps its check, principle and environment text, whatever its name or layers. Versions stored before the change keep what they stored, since versions never change (re-syncing different content gets 409). Check text in lifecycle views (PO-3.2) is shown on every project, as check visibility no longer depends on the project.
 
 - **Actor**: User / pm-flow · **Trigger**: syncs a playbook via `POST /api/playbooks` or `syncPlaybook`
 - **Preconditions**: caller is authenticated (API key or session cookie)
@@ -104,5 +105,5 @@ Code, docs, agent instructions, the playbooks repo and open plans describe perso
 
 | ID | Acceptance criterion | Tests |
 | --- | --- | --- |
-| PO-4.1 | `grep -rniI company` finds nothing in my_pm's `src/`, `tests/`, `README.md` and `CLAUDE.md`, or in the playbooks repo outside its CHANGELOGs. Applied migrations and `.claude/.notes/` keep their history | check: grep -rniI company (verify) |
+| PO-4.1 | `grep -rniI company src tests README.md CLAUDE.md` finds only the PO-1.2 and PO-3.1 tests, which use the word as test data. In the playbooks repo, `grep -rniI company --exclude-dir=node_modules --exclude-dir=.git --exclude=CHANGELOG.md .` finds nothing. Applied migrations and `.claude/.notes/` keep their history. | check: grep -rniI company (verify) |
 | PO-4.2 | No open PMA or PLAY plan asks for company behaviour, and PMA-M14 is cancelled. Built milestones (PMA-M6, PMA-M9, PLAY-M1) keep their specs as history. | check: plan sweep in my_pm (verify) |
