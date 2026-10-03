@@ -9,7 +9,7 @@ async function main() {
   if (process.env.PM_STORAGE !== "fs" || !process.env.PM_DATA_DIR) throw new Error("seed.ts only seeds a file workspace in PM_DATA_DIR");
   // E2E's repo links have no host, so they never reach GitHub.
   await createProject({ title: "E2E project", code: "E2E", repos: ["e2e/app", "e2e/web"] });
-  // A project whose repo is linked (the field is going away): its repo is pulled (and fails against the dead GITHUB_API_URL).
+  // A project whose repo is linked: its repo is pulled (and fails against the dead GITHUB_API_URL).
   await createProject({ title: "GitHub project", code: "GH", repos: ["github.com/e2e/synced"] });
   await createMilestone({ title: "E2E milestone", project: "E2E" });
   await createMilestone({ title: "GH milestone", project: "GH" });

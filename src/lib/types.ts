@@ -27,7 +27,6 @@ export const LIFECYCLE_STAGES = ["idea", "spec", "design", "plan", "build", "ver
 export const LifecycleStage = z.enum(LIFECYCLE_STAGES);
 export type LifecycleStage = z.infer<typeof LifecycleStage>;
 
-
 /** `sdlc`, `personal`, or a project code such as `PMA`. */
 export const PLAYBOOK_NAME = /^[A-Za-z][A-Za-z0-9-]{0,39}$/;
 export const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;

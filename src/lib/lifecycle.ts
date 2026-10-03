@@ -16,7 +16,7 @@ import {
 } from "./types";
 
 /**
- * The lifecycle engine: where each milestone stands against its project's pinned playbook, what to do next, and what
+ * The lifecycle engine: where each milestone stands against its project's pinned playbook, what to do next, and wha
  * needs attention across projects. Pure, like the scheduler: the caller passes the workspace, plus the schedule for
  * deadline risk and task order. Stages are fixed (LIFECYCLE_STAGES); playbooks only add checks to them.
  */
@@ -81,7 +81,7 @@ export interface LifecycleWarning {
 export interface ProjectLifecycle {
   code: string;
   title: string;
-  
+
   /** The pinned version, if it is stored. */
   playbook?: string;
   environments: string[];
@@ -91,7 +91,7 @@ export interface ProjectLifecycle {
 
 export interface RankedAction {
   project: string;
-  
+
   milestone: string;
   title: string;
   stage: LifecycleStage;

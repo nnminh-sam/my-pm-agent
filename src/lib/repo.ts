@@ -615,7 +615,7 @@ export async function updateProject(ref: string, patch: ProjectPatch): Promise<P
   if (patch.priority !== undefined) next.priority = patch.priority;
   if (patch.deadline !== undefined) next.deadline = patch.deadline ?? undefined;
   if (patch.status !== undefined) next.status = patch.status;
-  
+
   if (patch.detectors !== undefined) next.detectors = normalizeDetectors(patch.detectors);
   if (patch.repos !== undefined) {
     next.repos = normalizeRepos(patch.repos);

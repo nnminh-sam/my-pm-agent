@@ -1,17 +1,14 @@
 -- Drop the project context field (PMA-M17-T5) as the app is now for personal projects only.
--- All behaviors that depended on this field (GitHub integration differences, playbook stripping,
--- lifecycle check text) have already been removed.
---
--- Fails if any project is still a company project to prevent accidental data loss.
+-- This migration runs only after the code that no longer reads `context` is deployed, because the old code selects that column.
 
-DO $$
-DECLARE
+do $$
+declare
   company_codes text;
-BEGIN
-  SELECT string_agg(code, ', ') INTO company_codes FROM projects WHERE context = 'company';
-  IF company_codes IS NOT NULL THEN
-    RAISE EXCEPTION 'Cannot drop context column: projects % are still company projects', company_codes;
-  END IF;
-END $$;
+begin
+  select string_agg(code, ', ' order by code) into company_codes from projects where context = 'company';
+  if company_codes is not null then
+    raise exception 'projects % are still company; set their context to ''personal'' (or delete them) before running 008', company_codes;
+  end if;
+end $$;
 
-ALTER TABLE projects DROP COLUMN context;
+alter table projects drop column context;

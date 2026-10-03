@@ -77,6 +77,8 @@ async function neonTestDb(url: string): Promise<PgRepository> {
     query: async (text, params) => (await client.query(text, params)).rows,
   };
   try {
+    const exists = await session.query("select to_regclass('public.projects') as exists");
+    if (exists[0]?.exists) await session.exec("truncate task_comments, github_snapshots, tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
     await migrate(session);
     await session.exec("truncate task_comments, github_snapshots, tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
   } finally {
@@ -1254,6 +1256,11 @@ describe("import / export", () => {
       ],
     });
     // So do PR references, GitHub snapshots and comments.
+    // Write a manual legacy context to simulate an old expor
+    const pxFile = path.join((source as unknown as { store: { root: string } }).store.root, `projects/${px.id}.md`);
+    const oldContent = await readFile(pxFile, "utf8");
+    await writeFile(pxFile, oldContent.replace("code: PX\n", "code: PX\ncontext: personal\n"));
+
     const t1 = await repo.getTask("PX-M1-T1");
     await source.save({ tasks: [{ ...t1, prs: ["acme/px#7", "acme/px#8"] }] });
     for (const snapshot of SNAPSHOTS) await source.upsertGithubSnapshot(snapshot);
@@ -1270,7 +1277,7 @@ describe("import / export", () => {
     await repo.createApiKey({ label: "agent", hash: "a".repeat(64) });
   });
 
-  it("PO-1.4 imports markdown into Postgres with identical workspace and schedule, and continues numbering", async () => {
+  it("PO-1.4 PO-1.4 imports markdown into Postgres with identical workspace and schedule, and continues numbering", async () => {
     const pg = await pglite();
     await importInto(pg, source);
     expect(await compareBackends(source, pg)).toEqual([]);
@@ -1278,6 +1285,8 @@ describe("import / export", () => {
     expect((await pg.getProject({ code: "PX" }))?.playbook).toBe("sdlc@1.0.0");
     expect(await pg.countUsers()).toBe(0);
     expect(await pg.listApiKeys()).toEqual([]);
+    expect("context" in (await pg.getProject({ code: "PX" }))!).toBe(false);
+    expect(await readFile(path.join((source as unknown as { store: { root: string } }).store.root, `projects/${(await pg.getProject({ code: "PX" }))!.id}.md`), "utf8")).toContain("context: personal");
 
     await expect(importInto(pg, source)).rejects.toThrow("not empty");
     const user = await pg.insertUser({ email: "pg@example.com", password_hash: "hash", created: "2026-09-27" });
@@ -1321,7 +1330,7 @@ describe("import / export", () => {
 
 
 describe("PO-1.1 and PO-1.3", () => {
-  it("PO-1.1 createProject and updateProject have no context, listProjects/getProject return none", async () => {
+  it("PO-1.1 createProject and updateProject have no context, loadWorkspace returns none", async () => {
     const pg = await pglite();
     setRepository(pg);
     const p = await repo.createProject({ title: "PO11", code: "PO11" });
@@ -1338,18 +1347,18 @@ describe("PO-1.1 and PO-1.3", () => {
     const fileRepo = new FileRepository(store);
     setRepository(fileRepo);
     await mkdir(path.join(dir, "projects"), { recursive: true });
-    
+
     const pid = newId();
     await writeFile(
       path.join(dir, "projects", `${pid}.md`),
       `---\nid: ${pid}\ncode: PO13\ntitle: PO13\ncontext: legacy\ncreated: 2026-09-01\nrepos: []\ndetectors: []\n---\n\n`
     );
-    
+
     const p = await repo.getProject("PO13");
     expect(p).toBeDefined();
     expect("context" in p!).toBe(false);
     await repo.updateProject("PO13", { title: "Updated" });
-    
+
     const raw = await readFile(path.join(dir, "projects", `${pid}.md`), "utf8");
     expect(raw).not.toContain("context:");
   });

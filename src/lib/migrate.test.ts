@@ -185,18 +185,50 @@ describe("007_github", { timeout: 30_000 }, () => {
 });
 
 describe("008_drop_project_context", { timeout: 30_000 }, () => {
-  it("PO-1.2 refuses to run if any project is company, leaving the column", async () => {
+  it("PO-1.2 (a) refuses to run if any project is company, leaving the column", async () => {
     const { session, rows } = await databaseBefore("008");
-    const project = newId();
-    await session.exec(`insert into projects (id, code, title, created, context) values ('${project}', 'PMA', 'My PM Agent', '2026-09-27', 'company');`);
+    const p1 = newId();
+    const p2 = newId();
+    await session.exec(`
+      insert into projects (id, code, title, created, context) values
+      ('${p1}', 'P1', 'Personal', '2026-09-27', 'personal'),
+      ('${p2}', 'P2', 'Company', '2026-09-27', 'company');
+    `);
     await expect(migrate(session, MIGRATIONS)).rejects.toThrow(/company/i);
+    const after = await rows("select id, context from projects order by code");
+    expect(after).toEqual([{ id: p1, context: "personal" }, { id: p2, context: "company" }]);
     const cols = await rows("select column_name from information_schema.columns where table_name = 'projects' and column_name = 'context'");
     expect(cols.length).toBe(1);
-    
-    // Now delete it so we can test success
-    await session.exec(`delete from projects where id = '${project}';`);
+    const migs = await rows("select version from schema_migrations where version = '008_drop_project_context'");
+    expect(migs.length).toBe(0);
+  });
+
+  it("PO-1.2 (b) succeeds with only personal projects: column is dropped, row survives, PgRepository loads", async () => {
+    const { session, db, rows } = await databaseBefore("008");
+    const p1 = newId();
+    await session.exec(`insert into projects (id, code, title, created, context) values ('${p1}', 'P1', 'Personal', '2026-09-27', 'personal');`);
     await migrate(session, MIGRATIONS);
-    const colsAfter = await rows("select column_name from information_schema.columns where table_name = 'projects' and column_name = 'context'");
-    expect(colsAfter.length).toBe(0);
+    const cols = await rows("select column_name from information_schema.columns where table_name = 'projects' and column_name = 'context'");
+    expect(cols.length).toBe(0);
+    const projs = await rows("select id from projects");
+    expect(projs).toEqual([{ id: p1 }]);
+    const repoInst = new PgRepository(db);
+    const all = await repoInst.loadAll();
+    expect(all.projects.length).toBe(1);
+  });
+
+  it("PO-1.2 (c) deploy-first window: new code via PgRepository can create, update, and load projects while column exists", async () => {
+    const { db, rows } = await databaseBefore("008");
+    const repoInst = new PgRepository(db);
+    setRepository(repoInst);
+    const p = await repo.createProject({ title: "Deploy First", code: "DF" });
+    await repo.updateProject(p.id, { title: "Updated DF" });
+    const loaded = await repo.getProject(p.id);
+    expect(loaded?.title).toBe("Updated DF");
+
+    // Inserted rows got the column default ('personal') under the hood because the DB still has i
+    const raw = await rows(`select context from projects where id = '${p.id}'`);
+    expect(raw).toEqual([{ context: "personal" }]);
+    setRepository(undefined);
   });
 });
