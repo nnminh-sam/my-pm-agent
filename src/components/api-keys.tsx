@@ -2,6 +2,7 @@
 
 import { useActionState, useState, useTransition } from "react";
 import { createApiKeyAction, revokeApiKeyAction, type CreateApiKeyState } from "@/app/actions";
+import { PendingButton } from "@/components/pending";
 import type { PublicApiKey } from "@/lib/auth/api-keys";
 
 /** `YYYY-MM-DD HH:MM UTC`: the same on the server and in the browser (no hydration mismatch). */
@@ -68,9 +69,10 @@ function KeyRow({ apiKey }: { apiKey: PublicApiKey }) {
         {revoked ? (
           `revoked ${apiKey.revoked_at!.slice(0, 10)}`
         ) : (
-          <button
+          <PendingButton
             type="button"
-            disabled={pending}
+            pending={pending}
+            pendingText="Revoking…"
             onClick={() => {
               if (!confirm(`Revoke ${apiKey.id}${apiKey.label ? ` (${apiKey.label})` : ""}? Agents using it get 401 right away.`)) return;
               setError(null);
@@ -82,10 +84,10 @@ function KeyRow({ apiKey }: { apiKey: PublicApiKey }) {
                 }
               });
             }}
-            className="rounded border border-border px-2 py-0.5 text-danger hover:bg-danger-soft disabled:opacity-50"
+            className="rounded border border-border px-2 py-0.5 text-danger hover:bg-danger-soft"
           >
-            {pending ? "Revoking…" : "Revoke"}
-          </button>
+            Revoke
+          </PendingButton>
         )}
         {error && <p className="text-danger">{error}</p>}
       </td>
@@ -108,12 +110,9 @@ export function ApiKeys({ keys, endpoint }: { keys: PublicApiKey[]; endpoint: st
           aria-label="Key label"
           className="min-w-0 flex-1 rounded-lg border border-border bg-bg px-3 py-1.5"
         />
-        <button
-          disabled={pending}
-          className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white disabled:opacity-50 dark:text-black"
-        >
-          {pending ? "Creating…" : "Create API key"}
-        </button>
+        <PendingButton pending={pending} pendingText="Creating…" className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white dark:text-black">
+          Create API key
+        </PendingButton>
       </form>
       {state && !state.ok && (
         <p role="alert" className="text-danger">

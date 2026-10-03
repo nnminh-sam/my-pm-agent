@@ -6,7 +6,7 @@ import { CopyCode } from "@/components/copy-code";
 import { PrCard } from "@/components/pr-card";
 import { RecordEditor } from "@/components/record-editor";
 import { StatusSelect } from "@/components/status-select";
-import { Card, Markdown, PriorityBadge, TaskLink, hours } from "@/components/ui";
+import { Card, Markdown, PriorityBadge, SubmitButton, TaskLink, hours } from "@/components/ui";
 import { loadPrView } from "@/lib/github/view";
 import { inheritedPriority, lineage, lookup } from "@/lib/hierarchy";
 import { scheduleFor } from "@/lib/planning";
@@ -183,7 +183,9 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
                   <label className="flex items-center gap-2 text-muted">
                     <input type="checkbox" name="done" /> Mark done
                   </label>
-                  <button className="w-full rounded bg-accent px-3 py-1.5 font-medium text-white dark:text-black">Log</button>
+                  <SubmitButton pendingText="Logging…" className="w-full rounded bg-accent px-3 py-1.5 font-medium text-white dark:text-black">
+                    Log
+                  </SubmitButton>
                 </form>
               </Card>
             )}

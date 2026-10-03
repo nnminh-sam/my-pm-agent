@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import Form from "next/form";
 import type { Unit } from "@/lib/timescale";
 
 /** Options are chosen by code, which is also what lands in the URL (`?project=PMA&milestone=PMA-M1`). */
@@ -32,7 +33,7 @@ export function GanttFilters(props: {
   const input = "rounded border border-border bg-surface px-2 py-1 text-sm [color-scheme:light_dark]";
 
   return (
-    <form ref={form} action="/gantt" method="get" className="flex flex-wrap items-end gap-3 text-sm">
+    <Form ref={form} action="/gantt" className="flex flex-wrap items-end gap-3 text-sm">
       <input type="hidden" name="unit" value={unit} />
       <Multi label="Projects" name="project" options={projects} selected={selected.projects} onChange={submit} />
       <Multi label="Milestones" name="milestone" options={milestones} selected={selected.milestones} onChange={submit} />
@@ -52,7 +53,7 @@ export function GanttFilters(props: {
           Clear filters
         </button>
       )}
-    </form>
+    </Form>
   );
 }
 
