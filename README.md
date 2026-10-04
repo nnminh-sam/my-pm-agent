@@ -103,7 +103,6 @@ title: Website relaunch
 status: active             # planned | active | on_hold | done | cancelled
 priority: P1
 deadline: 2026-11-15
-context: personal          # personal | company (company projects keep only metadata and links)
 playbook: WEB@1.0.0        # the pinned playbook version, once adopted (see Lifecycle)
 repos: [github.com/acme/web]   # git remotes, normalized; a repo belongs to one project
 detectors: [migrations]    # playbook detectors that fired in its repos
@@ -158,11 +157,10 @@ Estimation is calibrated from your own history. `get_estimation_stats` compares 
 Tasks say what's left to build. The lifecycle says where each milestone stands on its way to shipping, and what to do next across projects. `src/lib/lifecycle.ts` is pure and tested, like the scheduler.
 
 - **Stages are fixed:** idea → spec → design → plan → build → verify → release → learn, then done. After learn, a milestone can go through maintain first, when its retro proposed playbook changes.
-- **A playbook adds checks to the stages.** A project pins one version (`PMA@1.0.0`), normally its own playbook compiled from shared layers (`sdlc`, `personal`, `company`). A stored version never changes, so pinning an older one rolls back. The seed `sdlc@1.0.0` is `src/lib/playbooks/sdlc.yaml`.
+- **A playbook adds checks to the stages.** A project pins one version (`PMA@1.0.0`), normally its own playbook compiled from shared layers (`sdlc`, `personal`). A stored version never changes, so pinning an older one rolls back. The seed `sdlc@1.0.0` is `src/lib/playbooks/sdlc.yaml`.
 - **Checks are keyed `<stage>.<name>`.** `auto` checks are computed: tasks estimated, small enough, done, time logged, deployed to every environment. `probe` checks come from repo signals such as test runs. `attest` checks are recorded with evidence. A milestone leaves a stage only when that stage's checks are passed, or waived with a reason.
 - **Environments come from the playbook, in promotion order** (`dev → prod`). A milestone in release reaches them one at a time. An environment's own checks, such as a rollback plan for prod, come before deploying to it.
 - **Detectors add checks when a repo has something.** For example, `migrations/` adds `release.migration_paired` for prod.
-- **Company projects keep only metadata and links.** A playbook compiled from the `company` layer is stored without its check, principle or environment text.
 
 A milestone carries its stage, its check results and the environments it has reached:
 
@@ -234,12 +232,12 @@ Every code in the web UI (page headings, task lists) has a copy icon next to it.
 
 ## GitHub integration
 
-A task can reference pull requests, and my_pm shows each one's **overview**: title, body, state (open, draft, merged, closed), GitHub milestone, branches, author, assignees, and reviewers with their latest state (approved, changes requested, commented, pending). It never shows diffs, files, commits or review text; use `gh` for those. Company projects never contact GitHub: they take no PR references and show no PR section (a PR stored before a project became company is hidden).
+A task can reference pull requests, and my_pm shows each one's **overview**: title, body, state (open, draft, merged, closed), GitHub milestone, branches, author, assignees, and reviewers with their latest state (approved, changes requested, commented, pending). It never shows diffs, files, commits or review text; use `gh` for those.
 
 ### Linking repos and PRs
 
-- **Repos:** link `owner/repo` on the project page (Repositories), or with `update_project` `repos`. Only linked repos of personal projects are ever read.
-- **PRs:** set a task's `prs` in the record editor (`prs:` list) or with `update_task`, as a URL or `owner/repo#N` (stored as `owner/repo#N`). The list replaces the old one, and `[]` clears it. It is rejected when the PR's repo isn't linked to the task's project, or the project is a company project.
+- **Repos:** link `owner/repo` on the project page (Repositories), or with `update_project` `repos`. Only linked repos are ever read.
+- **PRs:** set a task's `prs` in the record editor (`prs:` list) or with `update_task`, as a URL or `owner/repo#N` (stored as `owner/repo#N`). The list replaces the old one, and `[]` clears it. It is rejected when the PR's repo isn't linked to the task's project.
 - **Where it shows:** the task page (overview and sync badge), a chip on task rows (`PR #11 · merged`), the project page (open PRs per linked repo), and `get_task` (`pull_requests`).
 
 ### Token (`GITHUB_TOKEN`)
@@ -267,7 +265,7 @@ Without it, snapshots refresh on page views. With it, merges and reviews show up
    - **Events:** "Let me select individual events": **Pull requests** and **Pull request reviews**
 3. GitHub sends a `ping`; Recent Deliveries should show **204**. A **401** means the secret doesn't match (or isn't set on the deployment).
 
-The route is open to the internet, and the HMAC signature is its only authentication. Events for unlinked or company repos, and other event types, get 204 and change nothing. GitHub doesn't retry failed deliveries: a missed one is corrected by the next page view after 60s, or use Redeliver.
+The route is open to the internet, and the HMAC signature is its only authentication. Events for unlinked repos, and other event types, get 204 and change nothing. GitHub doesn't retry failed deliveries: a missed one is corrected by the next page view after 60s, or use Redeliver.
 
 ### Sync badge
 
@@ -289,7 +287,6 @@ Anything but "synced" opens a details panel: the reason, HTTP status, GitHub's m
 | `no_access` | Repo renamed, deleted or not granted to the token |
 | `rate_limited` | Rate-limited until `<UTC time>` |
 | `not_linked` | Repo isn't linked to this project |
-| `company` | Company projects don't read GitHub |
 
 On a rate limit, `retry_after` is taken from GitHub's headers (capped at 1 hour, default 60s). Nothing calls GitHub for that PR or repo before then, Retry now included. The limit is tracked per PR or repo key, so opening a different PR can still make its own call. `get_task` returns `sync` as `{sync, fetched_at, reason}` plus `message` and `retry_after` when they apply.
 
@@ -302,7 +299,7 @@ On a rate limit, `retry_after` is taken from GitHub's headers (capped at 1 hour,
 
 ### Task comments
 
-Every task (on any project, company ones included) has a comment log: plain text, append-only, newest at the bottom. Author is `you` (web) or `agent` (MCP). Add and delete on the task page; agents call `add_comment`, and `get_task` returns the comments oldest first. Comments are not markdown, and my_pm never resolves references in them (a PR link or task code stays text). Over MCP there is no edit or delete.
+Every task has a comment log: plain text, append-only, newest at the bottom. Author is `you` (web) or `agent` (MCP). Add and delete on the task page; agents call `add_comment`, and `get_task` returns the comments oldest first. Comments are not markdown, and my_pm never resolves references in them (a PR link or task code stays text). Over MCP there is no edit or delete.
 
 ## Auth
 
