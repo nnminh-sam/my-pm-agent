@@ -1277,7 +1277,7 @@ describe("import / export", () => {
     await repo.createApiKey({ label: "agent", hash: "a".repeat(64) });
   });
 
-  it("PO-1.4 PO-1.4 imports markdown into Postgres with identical workspace and schedule, and continues numbering", async () => {
+  it("PO-1.4 imports markdown into Postgres with identical workspace and schedule, and continues numbering", async () => {
     const pg = await pglite();
     await importInto(pg, source);
     expect(await compareBackends(source, pg)).toEqual([]);

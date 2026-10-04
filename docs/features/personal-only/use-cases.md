@@ -1,6 +1,6 @@
 # Personal projects only: use cases
 
-Milestones: PMA-M17 · Updated: 2026-10-03
+Milestones: PMA-M17 · Updated: 2026-10-04
 
 my_pm is for personal projects only. The `context` field (`personal` / `company`) is removed, so every project behaves the way a personal project does today: PRs are accepted for every linked repository, playbooks are stored whole with check text, and no tool, page or export exposes a company concept.
 
@@ -41,7 +41,7 @@ I create and update projects without a context, and no tool, page or export show
 
 | ID | Acceptance criterion | Tests |
 | --- | --- | --- |
-| PO-1.1 | `create_project` and `update_project` have no `context` parameter, and `list_projects`, `get_project` and `get_lifecycle` return none | unit `src/lib/repo.test.ts` · unit `src/lib/lifecycle-api.test.ts` · unit `src/lib/mcp/server.test.ts` |
+| PO-1.1 | `create_project` and `update_project` have no `context` parameter, and `list_projects`, `get_project` and `get_lifecycle` return none | unit `src/lib/repo.test.ts` · unit `src/lib/lifecycle-api.test.ts` |
 | PO-1.2 | The migration drops `projects.context`, and refuses (changing nothing) while a project is still company | unit `src/lib/migrate.test.ts` |
 | PO-1.3 | On the file backend, a project file with a leftover `context:` key still loads, and loses the key on its next write | unit `src/lib/repo.test.ts` |
 | PO-1.4 | An export taken before the change still imports | unit `src/lib/repo.test.ts` |
@@ -65,9 +65,9 @@ A task takes PRs from any repo linked to its project. Pages and `get_task` show 
 
 | ID | Acceptance criterion | Tests |
 | --- | --- | --- |
-| PO-2.1 | A PR from a repo linked to the task's project is accepted on every project | unit `src/lib/repo.test.ts` |
-| PO-2.2 | That PR is synced on page open and by the webhook | e2e `tests/e2e/personal-only.spec.ts` · unit `src/lib/github/pull.test.ts` · unit `src/lib/github/webhook.test.ts` |
-| PO-2.3 | A repo linked to no project is still refused (`not_linked`), with no GitHub call | unit `src/lib/repo.test.ts` · unit `src/lib/github/pull.test.ts` · unit `src/lib/github/webhook.test.ts` |
+| PO-2.1 | A PR from a repo linked to the task's project is accepted on every project | e2e `tests/e2e/personal-only.spec.ts` · unit `src/lib/repo.test.ts` |
+| PO-2.2 | That PR is synced on page open and by the webhook | e2e `tests/e2e/personal-only.spec.ts` · unit `src/lib/repo.test.ts` · unit `src/lib/github/pull.test.ts` · unit `src/lib/github/webhook.test.ts` · unit `src/lib/github/view.test.ts` · unit `src/lib/github/project-prs.test.ts` · unit `src/lib/mcp/task-github.test.ts` |
+| PO-2.3 | A repo linked to no project is still refused (`not_linked`), with no GitHub call | unit `src/lib/repo.test.ts` · unit `src/lib/github/pull.test.ts` · unit `src/lib/github/webhook.test.ts` · unit `src/lib/github/view.test.ts` |
 
 ## PO-3 Playbooks stored whole
 
