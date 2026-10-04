@@ -35,7 +35,7 @@ export function RepoPrRow({ repo, pr }: { repo: string; pr: RepoPrItem }) {
 
 /**
  * The project page's open PRs: one list per linked GitHub repo, each with its own sync badge and, when there are
- * several repos, the repo's name. `null` (company project, or no github.com repo) renders nothing: no section, no badge.
+ * several repos, the repo's name. `null` (no github.com repo) renders nothing: no section, no badge.
  * A repo never synced shows its badge (with the reason) and no rows; one out of sync shows the last rows it had.
  */
 export function RepoPrs({ prs, now }: { prs: ProjectPrs | null; now: string }) {

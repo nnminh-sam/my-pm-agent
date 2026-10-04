@@ -2,8 +2,8 @@
  * The project page's open PRs: one entry per linked GitHub repo, loaded in parallel (each is one non-forced pull, so a
  * snapshot under 60s old costs no GitHub call). Server-only, via ./view. Nothing here throws on a GitHub failure.
  *
- * Graceful absence: a company project never contacts GitHub, and a project with no github.com repo has no PR section
- * (null), so neither gets a badge. Other hosts' remotes are ignored here (they only feed local hooks).
+ * Graceful absence: a project with no github.com repo has no PR section (null), so it gets no badge. Other hosts'
+ * remotes are ignored here (they only feed local hooks).
  */
 import type { Project } from "../types";
 import type { RepoPrItem } from "./overview";
@@ -33,10 +33,9 @@ export function githubReposOf(project: Pick<Project, "repos">): string[] {
 }
 
 export async function loadProjectPrs(
-  project: Pick<Project, "repos" | "context">,
+  project: Pick<Project, "repos">,
   options: PullOptions = {},
 ): Promise<ProjectPrs | null> {
-  if (project.context === "company") return null;
   const repos = githubReposOf(project);
   if (!repos.length) return null;
   const sections = await Promise.all(repos.map(async (repo) => ({ repo, view: await loadRepoView(repo, options) })));

@@ -31,11 +31,11 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
   const reason = plan.unscheduled.find((u) => u.id === task.id)?.reason;
   const byId = new Map(ws.tasks.map((t) => [t.id, t]));
   const dependents = ws.tasks.filter((t) => t.depends_on.includes(task.id));
-  // Opening the page pulls its PRs (a snapshot under 60s old is served as is). A company project has no PR section.
+  // Opening the page pulls its PRs (a snapshot under 60s old is served as is).
   const now = new Date().toISOString();
   const [comments, prs] = await Promise.all([
     listComments(task.id),
-    project?.context === "company" ? [] : Promise.all(task.prs.map(async (ref) => ({ ref, view: await loadPrView(ref) }))),
+    Promise.all(task.prs.map(async (ref) => ({ ref, view: await loadPrView(ref) }))),
   ]);
   const closed = task.status === "done" || task.status === "cancelled";
 

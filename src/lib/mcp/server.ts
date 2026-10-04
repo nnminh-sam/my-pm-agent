@@ -221,14 +221,14 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Get task",
       description:
-        "A task's full details, including its markdown description, log and scheduled slot, plus what's needed to start on it: milestone_context (code, title, status, spec), project_context (code, title) and dependencies (code, title, status). Also comments (oldest first: id, author, created_at, body) and, when the task has PRs, pull_requests: per PR its ref, url, overview (title, body, state, GitHub milestone, reviewers with states, assignees) and sync ({sync: synced | out_of_sync | never, fetched_at, reason}, plus message and retry_after when the last attempt failed or GitHub rate-limited). Both come from stored snapshots and never call GitHub (a PR whose repo is no longer linked to a personal project shows no overview, reason not_linked); for the diff or review threads use `gh`.",
+        "A task's full details, including its markdown description, log and scheduled slot, plus what's needed to start on it: milestone_context (code, title, status, spec), project_context (code, title) and dependencies (code, title, status). Also comments (oldest first: id, author, created_at, body) and, when the task has PRs, pull_requests: per PR its ref, url, overview (title, body, state, GitHub milestone, reviewers with states, assignees) and sync ({sync: synced | out_of_sync | never, fetched_at, reason}, plus message and retry_after when the last attempt failed or GitHub rate-limited). Both come from stored snapshots and never call GitHub (a PR whose repo is no longer linked to a project shows no overview, reason not_linked); for the diff or review threads use `gh`.",
       inputSchema: z.object({ id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id).") }),
       annotations: READ,
     },
     async ({ id }) =>
       run(async () => {
         const [task, ws] = await Promise.all([getTask(id), loadWorkspace()]);
-        const [comments, pull_requests] = await Promise.all([listComments(task.id), taskGithub(task, ws)]);
+        const [comments, pull_requests] = await Promise.all([listComments(task.id), taskGithub(task)]);
         return json({
           ...taskRow(task, ws, scheduleFor(ws)),
           created: task.created,
@@ -269,7 +269,7 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Update task",
       description:
-        "Change any task field — status, priority, estimate (or pert), deadline, not_before, depends_on, order, tags, prs, description, milestone (moves it: the code changes) — or append a note. Nullable fields accept null to clear them. Set `prs` right after opening a pull request, with its URL or owner/repo#N (stored as owner/repo#N); it replaces the list ([] clears it). The PR's repo must be linked to the task's project (update_project repos), and company projects take no PRs. Returns the task's new slot and the effect on the schedule.",
+        "Change any task field — status, priority, estimate (or pert), deadline, not_before, depends_on, order, tags, prs, description, milestone (moves it: the code changes) — or append a note. Nullable fields accept null to clear them. Set `prs` right after opening a pull request, with its URL or owner/repo#N (stored as owner/repo#N); it replaces the list ([] clears it). The PR's repo must be linked to the task's project (update_project repos). Returns the task's new slot and the effect on the schedule.",
       inputSchema: TaskPatch.extend({ id: z.string().describe("Task code, e.g. PMA-M1-T3 (or its id).") }),
       annotations: { ...WRITE, idempotentHint: true },
     },
@@ -651,7 +651,7 @@ export function registerPmServer(server: McpServer) {
     {
       title: "Store playbook version",
       description:
-        "Store a compiled playbook (a project's playbook merged with its layers, as pm-flow builds it) as a new version. Sending the same content again changes nothing; changed content needs a new version number. Company playbooks keep only metadata. pm-flow normally calls POST /api/playbooks instead.",
+        "Store a compiled playbook (a project's playbook merged with its layers, as pm-flow builds it) as a new version. Sending the same content again changes nothing; changed content needs a new version number. pm-flow normally calls POST /api/playbooks instead.",
       inputSchema: z.object({
         playbook: z
           .record(z.string(), z.unknown())

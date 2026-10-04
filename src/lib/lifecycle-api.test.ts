@@ -169,6 +169,17 @@ describe("lifecycle MCP tools", () => {
     expect(await tool("reopen_check", { milestone: "PMA-M1", check: "release.rollback_plan" })).toMatchObject({ code: "PMA-M1" });
   });
 
+  it("PO-3.2 get_lifecycle shows check text on every project", async () => {
+    openMode();
+    await repo.createProject({ title: "ACME Corp", code: "ACME" });
+    await tool("set_playbook_version", { project: "ACME", version: "PMA@1.0.0" });
+    await repo.createMilestone({ title: "M1", project: "ACME" });
+    const view = await tool("get_lifecycle", { project: "ACME" });
+    const m1 = (view.milestones as { checks: { key: string; text?: string }[] }[])[0];
+    const specCheck = m1.checks.find((c) => c.key === "spec.accepted");
+    expect(specCheck!.text).toEqual("Spec accepted, with acceptance criteria as a checklist");
+  });
+
   it("stores a playbook through the tool too, and explains unknown checks", async () => {
     openMode();
     expect(await tool("sync_playbook", { playbook: { ...pma, version: "1.1.0" } })).toMatchObject({ ref: "PMA@1.1.0", created: true });
@@ -185,5 +196,48 @@ describe("lifecycle MCP tools", () => {
     expect(await tool("pass_check", { milestone: "PMA-M1", check: "ship.it" })).toMatchObject({
       error: expect.stringContaining("ship.it isn't a check of PMA's playbook PMA@1.0.0"),
     });
+  });
+});
+describe("PO-1.1", () => {
+  it("PO-1.1 MCP schemas and project return values have no context property", async () => {
+    openMode();
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+    const res = await mcpRoute(new NextRequest(`${BASE}/api/mcp`, { method: "POST", headers, body }));
+    const text = await res.text();
+    const line = text.trim().startsWith("{") ? text : text.split("\n").find((l) => l.startsWith("data: "))!.slice(6);
+    const { result } = JSON.parse(line) as unknown as { result: { tools: { name: string, inputSchema: { properties: Record<string, unknown> } }[] } };
+    const tools = result.tools;
+    const cp = tools.find((t) => t.name === "create_project")!;
+    const up = tools.find((t) => t.name === "update_project")!;
+    expect(cp.inputSchema.properties).not.toHaveProperty("context");
+    expect(up.inputSchema.properties).not.toHaveProperty("context");
+
+    const noContext = (v: unknown) => expect(JSON.stringify(v)).not.toMatch(/"context":/);
+
+    const p1 = await tool("create_project", { title: "T", code: "T1" });
+    noContext(p1);
+
+    const p2 = await tool("update_project", { id: "T1", title: "T2" });
+    noContext(p2);
+
+    const list = await tool("list_projects") as unknown as { code: string }[];
+    noContext(list);
+    expect(list.some(p => p.code === "T1")).toBe(true);
+
+    const get = await tool("get_project", { id: "T1" }) as unknown as { code: string };
+    noContext(get);
+    expect(get.code).toBe("T1");
+
+    await tool("set_playbook_version", { project: "T1", version: "PMA@1.0.0" });
+    await repo.createMilestone({ title: "M1", project: "T1" });
+
+    const lc = await tool("get_lifecycle", { project: "T1" }) as unknown as { milestones: unknown[] };
+    noContext(lc);
+    expect(lc.milestones.length).toBeGreaterThan(0);
+
+    const next = await tool("get_next") as unknown as { next: { project: string }[] };
+    noContext(next);
+    expect(next.next.some((n) => n.project === "T1")).toBe(true);
   });
 });

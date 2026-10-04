@@ -11,13 +11,12 @@ import {
   type MilestoneStatus,
   type Priority,
   type Project,
-  type ProjectContext,
   type Settings,
   type Task,
 } from "./types";
 
 /**
- * The lifecycle engine: where each milestone stands against its project's pinned playbook, what to do next, and what
+ * The lifecycle engine: where each milestone stands against its project's pinned playbook, what to do next, and wha
  * needs attention across projects. Pure, like the scheduler: the caller passes the workspace, plus the schedule for
  * deadline risk and task order. Stages are fixed (LIFECYCLE_STAGES); playbooks only add checks to them.
  */
@@ -36,7 +35,7 @@ export interface CheckStatus {
   state: CheckState;
   env?: string;
   principle?: string;
-  /** Left out for company projects. */
+  /** What passing means, from the playbook; absent when the check has none. */
   text?: string;
   skill?: string;
   /** Why an auto check isn't passed, e.g. "2 of 5 tasks unestimated". */
@@ -82,7 +81,7 @@ export interface LifecycleWarning {
 export interface ProjectLifecycle {
   code: string;
   title: string;
-  context: ProjectContext;
+
   /** The pinned version, if it is stored. */
   playbook?: string;
   environments: string[];
@@ -92,7 +91,7 @@ export interface ProjectLifecycle {
 
 export interface RankedAction {
   project: string;
-  context: ProjectContext;
+
   milestone: string;
   title: string;
   stage: LifecycleStage;
@@ -205,7 +204,6 @@ function evaluate(
   tasks: Task[],
   environments: string[],
   maxTaskHours: number,
-  context: ProjectContext,
 ): CheckStatus {
   const { key, check, source } = entry;
   const result = milestone.checks[key];
@@ -219,7 +217,7 @@ function evaluate(
     state: computed.state,
     env: check.env,
     principle: check.principle,
-    text: context === "company" ? undefined : check.text,
+    text: check.text,
     skill: check.kind === "attest" ? check.skill : undefined,
     detail: "detail" in computed ? computed.detail : undefined,
     result,
@@ -328,7 +326,7 @@ export function milestoneLifecycle(milestone: Milestone, ctx: MilestoneContext):
   const environments = version.definition.environments.map((e) => e.name);
   const entries = projectChecks(version.definition, version.ref, project.detectors);
   const stage = milestone.stage ?? "idea";
-  const checks = entries.map((e) => evaluate(e, milestone, ctx.tasks, environments, settings.max_task_hours, project.context));
+  const checks = entries.map((e) => evaluate(e, milestone, ctx.tasks, environments, settings.max_task_hours));
   const finished = milestone.status === "done" || milestone.status === "cancelled";
   return {
     code: milestone.code,
@@ -374,7 +372,6 @@ export function lifecycle({ projects, milestones, tasks, playbooks, settings, pl
     const view: ProjectLifecycle = {
       code: project.code,
       title: project.title,
-      context: project.context,
       playbook: pinned.ref,
       environments: pinned.definition.environments.map((e) => e.name),
       warnings,
@@ -397,7 +394,6 @@ export function lifecycle({ projects, milestones, tasks, playbooks, settings, pl
       if (stage === "idea" || !item.next) continue;
       result.next.push({
         project: project.code,
-        context: project.context,
         milestone: item.code,
         title: item.title,
         stage,

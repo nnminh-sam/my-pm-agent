@@ -16,8 +16,7 @@ import { getGithubSnapshot, githubRepoAccess, upsertGithubSnapshot } from "@/lib
 // - 401: unsigned, a bad signature, or GITHUB_WEBHOOK_SECRET not set. One answer for all three, so a caller can't
 //   tell whether a secret is configured (a 503 would say so); the missing secret is logged on the server instead.
 // - 400: a validly signed body that isn't JSON (e.g. the webhook set to application/x-www-form-urlencoded).
-// - 204: everything else. `ping`, unhandled events, and repos not linked to a personal project (unlinked, or company
-//   only) are acknowledged with nothing stored.
+// - 204: everything else. `ping`, unhandled events, and repos not linked to a project are acknowledged with nothing stored.
 
 let warnedNoSecret = false;
 
@@ -51,7 +50,7 @@ export async function POST(request: Request) {
   const event = request.headers.get(EVENT_HEADER);
   if (!isHandledEvent(event)) return noContent();
   const repo = webhookRepo(payload);
-  // Checked on every delivery, as the pull path does: company and unlinked repos store nothing.
+  // Checked on every delivery, as the pull path does: unlinked repos store nothing.
   if (!repo || !(await githubRepoAccess(repo)).allowed) return noContent();
 
   const now = new Date();

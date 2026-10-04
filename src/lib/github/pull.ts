@@ -47,13 +47,12 @@ export interface Pulled<T> {
 /**
  * Not allowed: no GitHub call was made and nothing was stored or served.
  * - invalid: not an `owner/repo#123` / `owner/repo` (or `github.com/owner/repo`);
- * - not_linked: the repo isn't linked to any project;
- * - company: it's linked only to company projects, which never contact GitHub.
+ * - not_linked: the repo isn't linked to any project.
  */
 export interface Refused {
   allowed: false;
   key: string | null;
-  refusal: "invalid" | "not_linked" | "company";
+  refusal: "invalid" | "not_linked";
   message: string;
 }
 

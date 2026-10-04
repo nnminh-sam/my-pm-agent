@@ -30,7 +30,6 @@ import {
   MilestoneStatus,
   Priority,
   Project,
-  ProjectContext,
   ProjectStatus,
   Settings,
   SettingsPatch,
@@ -91,7 +90,7 @@ export const TaskPatch = z.object({
     .array(z.string())
     .optional()
     .describe(
-      "Pull requests this task covers, as GitHub URLs or owner/repo#N (stored as owner/repo#N). Replaces the list; [] clears it. Each repo must be linked to the task's project; company projects take none.",
+      "Pull requests this task covers, as GitHub URLs or owner/repo#N (stored as owner/repo#N). Replaces the list; [] clears it. Each repo must be linked to the task's project.",
     ),
   order: z.number().nullable().optional(),
   description: z.string().optional().describe("Replaces the markdown body."),
@@ -136,7 +135,6 @@ export const NewProject = z.object({
   priority: Priority.optional().describe("Default for its milestones and tasks (P2 if omitted)."),
   deadline: dateStr.optional().describe("Applies to every task in the project."),
   status: ProjectStatus.optional(),
-  context: ProjectContext.optional().describe("personal (default) or company: company projects keep only metadata and links."),
   repos: z
     .array(z.string())
     .optional()
@@ -151,7 +149,6 @@ export const ProjectPatch = z.object({
   priority: Priority.optional(),
   deadline: dateStr.nullable().optional(),
   status: ProjectStatus.optional().describe("on_hold / done / cancelled take the project's tasks off the schedule."),
-  context: ProjectContext.optional(),
   repos: z.array(z.string()).optional().describe("Replaces its git remotes (any form; stored normalized)."),
   detectors: z
     .array(z.string())
@@ -176,7 +173,7 @@ export function normalizeId(id: string, prefix: Prefix) {
 export class NotFoundError extends Error {}
 /** A write that clashes with what's stored (e.g. different content under a stored playbook version). */
 export class ConflictError extends Error {}
-/** A PR reference that can't be kept: malformed, an unlinked repo, or a company project. Its message says how to fix it. */
+/** A PR reference that can't be kept: malformed or an unlinked repo. Its message says how to fix it. */
 export class PrReferenceError extends Error {}
 
 const EXAMPLE: Record<CodeKind, string> = { project: "PMA", milestone: "PMA-M1", task: "PMA-M1-T3" };
@@ -328,7 +325,7 @@ export async function getTask(ref: string): Promise<Task> {
 export const MAX_COMMENT_LENGTH = 10_000;
 
 /**
- * Appends a plain-text comment to a task (any project, personal or company). The body is kept verbatim apart from
+ * Appends a plain-text comment to a task. The body is kept verbatim apart from
  * trimming: no markdown, no reference resolution, no escaping (rendering escapes it).
  */
 export async function addComment(taskRef: string, body: string, author: CommentAuthor): Promise<TaskComment> {
@@ -600,7 +597,6 @@ export async function createProject(input: NewProject): Promise<Project> {
     status: input.status ?? "active",
     priority: input.priority ?? "P2",
     deadline: input.deadline,
-    context: input.context ?? "personal",
     repos,
     detectors: [],
     created: todayIn(settings.timezone),
@@ -619,7 +615,7 @@ export async function updateProject(ref: string, patch: ProjectPatch): Promise<P
   if (patch.priority !== undefined) next.priority = patch.priority;
   if (patch.deadline !== undefined) next.deadline = patch.deadline ?? undefined;
   if (patch.status !== undefined) next.status = patch.status;
-  if (patch.context !== undefined) next.context = patch.context;
+
   if (patch.detectors !== undefined) next.detectors = normalizeDetectors(patch.detectors);
   if (patch.repos !== undefined) {
     next.repos = normalizeRepos(patch.repos);
@@ -786,15 +782,9 @@ function normalizePrs(prs: string[]): string[] {
 }
 
 /**
- * PR references only make sense on a personal project whose linked repos include each PR's repo. Company projects
- * never touch GitHub, so they take none; otherwise link the repo first (update_project repos).
+ * PR references only make sense on a project whose linked repos include each PR's repo; link the repo first (update_project repos).
  */
-function assertPrsFit(prs: string[], project: Pick<Project, "code" | "context" | "repos">, action: string) {
-  if (project.context === "company") {
-    throw new PrReferenceError(
-      `${action}: ${project.code} is a company project, which takes no PR references (they would need GitHub). Clear prs, or note the PR in a comment.`,
-    );
-  }
+function assertPrsFit(prs: string[], project: Pick<Project, "code" | "repos">, action: string) {
   for (const pr of prs) {
     const repo = pr.slice(0, pr.lastIndexOf("#"));
     if (!project.repos.includes(`github.com/${repo}`)) {
@@ -826,20 +816,16 @@ export async function recordGithubFailure(key: string, failure: GithubFailure): 
 
 export type GithubAccess =
   | { allowed: true }
-  | { allowed: false; refusal: "not_linked" | "company"; message: string };
+  | { allowed: false; refusal: "not_linked"; message: string };
 
 /**
- * Whether my_pm may contact GitHub about a repo (`owner/repo`): only when it's linked to at least one personal
- * project. Checked when data is read, not only when `prs` are written: a task's stored PRs can outlive the link
- * (a milestone moved, a project's repos or context changed).
+ * Whether my_pm may contact GitHub about a repo (`owner/repo`): only when it's linked to at least one project.
+ * Checked when data is read, not only when `prs` are written: a task's stored PRs can outlive the link
+ * (a milestone moved, or a project's repos changed).
  */
 export async function githubRepoAccess(repo: string): Promise<GithubAccess> {
   const projects = await getRepository().findProjectsByRepo(githubRemote(repo));
-  if (projects.some((p) => p.context === "personal")) return { allowed: true };
-  if (projects.length) {
-    const codes = projects.map((p) => p.code).join(", ");
-    return { allowed: false, refusal: "company", message: `${repo} is linked only to company projects (${codes}), which never contact GitHub.` };
-  }
+  if (projects.length) return { allowed: true };
   return { allowed: false, refusal: "not_linked", message: `${repo} isn't linked to any project. Link it with update_project (repos).` };
 }
 
@@ -880,35 +866,12 @@ function canonicalJson(value: unknown): string {
 
 export const hashPlaybook = (definition: Playbook) => createHash("sha256").update(canonicalJson(definition)).digest("hex");
 
-/** The company layer itself, or a playbook compiled from it. */
-export const isCompanyPlaybook = (p: Playbook) => p.name === "company" || p.layers.some((l) => l.name === "company");
-
-/** What a company playbook keeps in my_pm (D1): keys, kinds, names and links; no check, principle or environment text. */
-function metadataOnly(p: Playbook): Playbook {
-  const bare = (checks: Playbook["checks"]) =>
-    Object.fromEntries(
-      Object.entries(checks).map(([key, check]) => {
-        const copy = { ...check };
-        delete copy.text;
-        return [key, copy];
-      }),
-    );
-  return {
-    ...p,
-    principles: Object.fromEntries(Object.keys(p.principles).map((key) => [key, ""])),
-    environments: p.environments.map(({ name, url }) => (url ? { name, url } : { name })),
-    checks: bare(p.checks),
-    detectors: p.detectors.map((d) => ({ ...d, add: bare(d.add) })),
-  };
-}
-
 /**
  * Stores a compiled playbook (as pm-flow sends it) as a new version. Sending the same content again changes
  * nothing; different content under a stored version is refused, since versions never change.
  */
 export async function syncPlaybook(input: unknown, at: Date = new Date()): Promise<{ version: PlaybookVersion; created: boolean }> {
-  const parsed = Playbook.parse(input);
-  const definition = isCompanyPlaybook(parsed) ? metadataOnly(parsed) : parsed;
+  const definition = Playbook.parse(input);
   const hash = hashPlaybook(definition);
   const ref = playbookRef(definition);
   const repository = getRepository();

@@ -1,22 +1,27 @@
 // Seeds the e2e workspace (file backend in PM_DATA_DIR) through the repository, before the server starts.
 // Run by playwright.config.ts's webServer: node --import tsx tests/e2e/seed.ts
-import { addComment, createMilestone, createProject, createTasks } from "../../src/lib/repo";
+import { addComment, createMilestone, createProject, createTasks, updateTask, loadWorkspace } from "../../src/lib/repo";
 import { signUp } from "../../src/lib/auth/users";
 import { issueApiKey } from "../../src/lib/auth/api-keys";
 import { E2E_USER } from "./fixtures";
 
 async function main() {
   if (process.env.PM_STORAGE !== "fs" || !process.env.PM_DATA_DIR) throw new Error("seed.ts only seeds a file workspace in PM_DATA_DIR");
-  // Company projects never contact GitHub, so no page open reaches the network.
-  await createProject({ title: "E2E project", code: "E2E", context: "company", repos: ["e2e/app", "e2e/web"] });
-  // Personal, so its repo is pulled (and fails against the dead GITHUB_API_URL): the sync badge offers Retry now.
-  await createProject({ title: "GitHub project", code: "GH", context: "personal", repos: ["github.com/e2e/synced"] });
+  // E2E's repo links have no host, so they never reach GitHub.
+  await createProject({ title: "E2E project", code: "E2E", repos: ["e2e/app", "e2e/web"] });
+  // A project whose repo is linked: its repo is pulled (and fails against the dead GITHUB_API_URL).
+  await createProject({ title: "GitHub project", code: "GH", repos: ["github.com/e2e/synced"] });
   await createMilestone({ title: "E2E milestone", project: "E2E" });
+  await createMilestone({ title: "GH milestone", project: "GH" });
   await createTasks([
     { title: "First task", milestone: "E2E-M1", estimate: 4, ref: "first" },
     // A dependency link, so a task page links to another task (PF-2.1 within a section).
     { title: "Second task", milestone: "E2E-M1", estimate: 2, depends_on: ["first"] },
+    { title: "GH task", milestone: "GH-M1" },
   ]);
+  const ws = await loadWorkspace();
+  const ghTask = ws.tasks.find((t) => t.title === "GH task");
+  if (ghTask) await updateTask(ghTask.id, { prs: ["e2e/synced#1"] });
   for (const body of ["comment one", "comment two", "comment three"]) await addComment("E2E-M1-T1", body, "you");
   const outcome = await signUp({ email: E2E_USER.email, password: E2E_USER.password, confirm: E2E_USER.password });
   if (!outcome.ok) throw new Error(`seed sign-up failed: ${JSON.stringify(outcome)}`);

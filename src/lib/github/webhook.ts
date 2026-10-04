@@ -1,6 +1,6 @@
 /**
  * The GitHub webhook, pure: signature verification and how a delivery updates snapshots. No I/O (node:crypto only);
- * the route is src/app/api/github/webhook/route.ts, which checks the personal-repo link and does the storage.
+ * the route is src/app/api/github/webhook/route.ts, which checks the repo link and does the storage.
  *
  * A delivery carries the PR itself, so it is written straight into the snapshot and GitHub is never called back.
  */

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as repo from "../repo";
 import { setRepository } from "../repository";
 import { FileRepository } from "../repository/file";
@@ -15,7 +15,7 @@ beforeAll(async () => {
   setRepository(new FileRepository(new FsStore(dir)));
   await repo.createProject({ title: "Two", code: "TW", repos: ["https://www.github.com/Me/One.git", "git@github.com:me/two", "gitlab.com/x/y"] });
   await repo.createProject({ title: "One", code: "ON", repos: ["github.com/me/solo"] });
-  await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
+  await repo.createProject({ title: "Corp", code: "CO", repos: ["github.com/corp/app"] });
   await repo.createProject({ title: "Fail", code: "FA", repos: ["github.com/me/fail"] });
   await repo.createProject({ title: "Bare", code: "BA" });
   await repo.createProject({ title: "Elsewhere", code: "EL", repos: ["gitlab.com/x/z"] });
@@ -80,13 +80,12 @@ describe("loadProjectPrs", () => {
     expect(prs?.sections).toHaveLength(1);
   });
 
-  it("a company project has no section and makes zero fetch calls", async () => {
+  it("PO-2.2 a project whose repo is linked shows PRs", async () => {
     const g = gh();
-    const spy = vi.spyOn(globalThis, "fetch");
-    expect(await loadProjectPrs(await project("CO"), g.options)).toBeNull();
-    expect(g.calls).toHaveLength(0);
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
+    const prs = await loadProjectPrs(await project("CO"), g.options);
+    expect(prs?.sections).toHaveLength(1);
+    expect(prs?.sections[0].view.sync.sync).toBe("synced");
+    expect(g.calls).toHaveLength(1);
   });
 
   it("no repos, or no github.com repo, means no section and no calls", async () => {

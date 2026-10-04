@@ -71,7 +71,6 @@ export function projectSummary(project: Project, ws: Workspace, plan: ScheduleRe
     status: project.status,
     priority: project.priority,
     deadline: project.deadline,
-    context: project.context,
     playbook: project.playbook,
     repos: project.repos.length ? project.repos : undefined,
     detectors: project.detectors.length ? project.detectors : undefined,

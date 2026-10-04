@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
@@ -77,6 +77,8 @@ async function neonTestDb(url: string): Promise<PgRepository> {
     query: async (text, params) => (await client.query(text, params)).rows,
   };
   try {
+    const exists = await session.query("select to_regclass('public.projects') as exists");
+    if (exists[0]?.exists) await session.exec("truncate task_comments, github_snapshots, tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
     await migrate(session);
     await session.exec("truncate task_comments, github_snapshots, tasks, milestones, projects, playbook_versions, settings, users, api_keys restart identity");
   } finally {
@@ -348,9 +350,9 @@ describe.each(backends)("$name backend", (backend) => {
       expect(ws.problems).toEqual([]);
     });
 
-    it("persists a project's context, pin, repos and detectors, and a milestone's stage, checks and deployments", async () => {
+    it("persists a project's pin, repos and detectors, and a milestone's stage, checks and deployments", async () => {
       const project = await repo.createProject({ title: "Lifecycle", code: "LC" });
-      expect(project).toMatchObject({ context: "personal", repos: [], detectors: [] });
+      expect(project).toMatchObject({ repos: [], detectors: [] });
       expect(project.playbook).toBeUndefined();
       const milestone = await repo.createMilestone({ title: "Core", project: "LC" });
       expect(milestone).toMatchObject({ checks: {}, deployments: {} });
@@ -362,7 +364,6 @@ describe.each(backends)("$name backend", (backend) => {
 
       const pinned = {
         ...project,
-        context: "company" as const,
         playbook: "sdlc@1.0.0",
         repos: ["github.com/acme/api", "github.com/acme/web"],
         detectors: ["migrations"],
@@ -445,20 +446,14 @@ describe.each(backends)("$name backend", (backend) => {
       await expect(repo.updateTask(bare.id, { prs: ["gh/site#1"] })).rejects.toThrow("It has no linked repos");
     });
 
-    it("refuses PRs on a company project and never contacts GitHub", async () => {
+    it("PO-2.1 accepts PRs on a project whose repo is linked", async () => {
+      await repo.createProject({ title: "Corp", code: "CO", repos: ["github.com/corp/app"] });
+      await repo.createMilestone({ title: "M", project: "CO" });
+      const [corp] = await repo.createTasks([{ title: "Review", milestone: "CO-M1" }]);
       const fetchSpy = vi.spyOn(globalThis, "fetch");
-      try {
-        await repo.createProject({ title: "Corp", code: "CO", context: "company", repos: ["github.com/corp/app"] });
-        await repo.createMilestone({ title: "M", project: "CO" });
-        const [corp] = await repo.createTasks([{ title: "Review", milestone: "CO-M1" }]);
-        await expect(repo.updateTask(corp.id, { prs: ["corp/app#5"] })).rejects.toThrow(/CO is a company project/);
-        expect((await repo.getTask(corp.id)).prs).toEqual([]);
-        // Clearing is always fine.
-        expect((await repo.updateTask(corp.id, { prs: [] })).prs).toEqual([]);
-        expect(fetchSpy).not.toHaveBeenCalled();
-      } finally {
-        fetchSpy.mockRestore();
-      }
+      expect((await repo.updateTask(corp.id, { prs: ["corp/app#5"] })).prs).toEqual(["corp/app#5"]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
     });
 
     it("re-checks PRs when a task moves to another milestone", async () => {
@@ -554,12 +549,15 @@ describe.each(backends)("$name backend", (backend) => {
       expect((await backendRepo.getGithubSnapshot(key))?.fetched_at).toBe("2026-09-29T01:05:00.000Z");
     });
 
-    it("finds the projects linking a repo, and whether GitHub may be contacted for it", async () => {
+    it("PO-2.2 finds the projects linking a repo, and whether GitHub may be contacted for it", async () => {
       expect((await backendRepo.findProjectsByRepo("github.com/gh/site")).map((p) => p.code)).toEqual(["GH"]);
       expect((await backendRepo.findProjectsByRepo("github.com/corp/app")).map((p) => p.code)).toEqual(["CO"]);
       expect(await backendRepo.findProjectsByRepo("github.com/nobody/here")).toEqual([]);
       expect(await repo.githubRepoAccess("gh/site")).toEqual({ allowed: true });
-      expect(await repo.githubRepoAccess("corp/app")).toMatchObject({ allowed: false, refusal: "company", message: expect.stringContaining("CO") });
+      expect(await repo.githubRepoAccess("corp/app")).toEqual({ allowed: true });
+    });
+
+    it("PO-2.3 refuses a repo linked to no project", async () => {
       expect(await repo.githubRepoAccess("nobody/here")).toMatchObject({ allowed: false, refusal: "not_linked" });
     });
 
@@ -676,8 +674,8 @@ describe.each(backends)("$name backend", (backend) => {
       expect((await repo.listComments(a.id)).map((x) => x.id)).toContain(mine.id);
     });
 
-    it("works on a company project", async () => {
-      await repo.createProject({ title: "Corp comments", code: "CCM", context: "company", repos: ["github.com/corp/ccm"] });
+    it("works on a project", async () => {
+      await repo.createProject({ title: "Corp comments", code: "CCM", repos: ["github.com/corp/ccm"] });
       await repo.createMilestone({ title: "M", project: "CCM" });
       const [t] = await repo.createTasks([{ title: "T", milestone: "CCM-M1" }]);
       const comment = await repo.addComment(t.code, "internal note", "agent");
@@ -714,23 +712,24 @@ describe.each(backends)("$name backend", (backend) => {
       await expect(repo.syncPlaybook({ name: "LW" })).rejects.toThrow();
     });
 
-    it("keeps only the metadata of a company playbook", async () => {
-      const { version } = await repo.syncPlaybook(
-        lw({
-          name: "ACME",
-          layers: [
-            { name: "sdlc", version: "1.0.0" },
-            { name: "company", version: "1.0.0" },
-          ],
-          environments: [{ name: "dev", db: "acme-dev", url: "https://dev.acme.test" }, { name: "prod" }],
-        }),
-      );
-      const d = version.definition;
-      expect(Object.values(d.checks).every((c) => c.text === undefined)).toBe(true);
-      expect(d.detectors[0].add["release.migration_paired"].text).toBeUndefined();
-      expect(Object.values(d.principles).every((text) => text === "")).toBe(true);
-      expect(d.environments).toEqual([{ name: "dev", url: "https://dev.acme.test" }, { name: "prod" }]);
-      expect(await backendRepo.getPlaybookVersion("ACME@1.0.0")).toEqual(version);
+    it.each([
+      { name: "company", layers: [{ name: "sdlc", version: "1.0.0" }] },
+      { name: "ACME", layers: [{ name: "sdlc", version: "1.0.0" }, { name: "company", version: "1.0.0" }] },
+    ])("PO-3.1 A playbook named company or with a layer named company is stored with its text ($name)", async ({ name, layers }) => {
+      const input = lw({
+        name,
+        layers,
+        environments: [{ name: "dev", db: "acme-dev", url: "https://dev.acme.test" }, { name: "prod" }],
+      });
+      const expected = Playbook.parse(input);
+      const { version, created } = await repo.syncPlaybook(input);
+      expect(created).toBe(true);
+      expect(version.definition).toEqual(expected);
+      expect(await backendRepo.getPlaybookVersion(`${name}@1.0.0`)).toEqual(version);
+
+      const second = await repo.syncPlaybook(input);
+      expect(second.created).toBe(false);
+      expect(second.version).toEqual(version);
     });
 
     it("pins a project to a stored version and places its milestones on the lifecycle", async () => {
@@ -805,10 +804,9 @@ describe.each(backends)("$name backend", (backend) => {
       const project = await repo.createProject({
         title: "Repos",
         code: "RP",
-        context: "company",
         repos: ["git@github.com:Acme/Billing.git", "https://github.com/acme/billing"],
       });
-      expect(project).toMatchObject({ context: "company", repos: ["github.com/acme/billing"] });
+      expect(project).toMatchObject({ repos: ["github.com/acme/billing"] });
       await expect(repo.createProject({ title: "Dup", code: "RQ", repos: ["ssh://git@github.com/acme/billing"] })).rejects.toThrow(
         "github.com/acme/billing already belongs to project RP",
       );
@@ -1245,7 +1243,7 @@ describe("import / export", () => {
     await source.insertPlaybookVersion(await sdlcVersion());
     await source.insertPlaybookVersion(await sdlcVersion("1.1.0"));
     const px = await repo.getProject("PX");
-    await source.save({ projects: [{ ...px, context: "company", playbook: "sdlc@1.0.0", repos: ["github.com/acme/px"], detectors: ["migrations"] }] });
+    await source.save({ projects: [{ ...px, context: "legacy", playbook: "sdlc@1.0.0", repos: ["github.com/acme/px"], detectors: ["migrations"] } as unknown as import("./types").Project] });
     const m1 = await repo.getMilestone("PX-M1");
     await source.save({
       milestones: [
@@ -1258,6 +1256,11 @@ describe("import / export", () => {
       ],
     });
     // So do PR references, GitHub snapshots and comments.
+    // Write a manual legacy context to simulate an old expor
+    const pxFile = path.join((source as unknown as { store: { root: string } }).store.root, `projects/${px.id}.md`);
+    const oldContent = await readFile(pxFile, "utf8");
+    await writeFile(pxFile, oldContent.replace("code: PX\n", "code: PX\ncontext: personal\n"));
+
     const t1 = await repo.getTask("PX-M1-T1");
     await source.save({ tasks: [{ ...t1, prs: ["acme/px#7", "acme/px#8"] }] });
     for (const snapshot of SNAPSHOTS) await source.upsertGithubSnapshot(snapshot);
@@ -1274,7 +1277,7 @@ describe("import / export", () => {
     await repo.createApiKey({ label: "agent", hash: "a".repeat(64) });
   });
 
-  it("imports markdown into Postgres with identical workspace and schedule, and continues numbering", async () => {
+  it("PO-1.4 imports markdown into Postgres with identical workspace and schedule, and continues numbering", async () => {
     const pg = await pglite();
     await importInto(pg, source);
     expect(await compareBackends(source, pg)).toEqual([]);
@@ -1282,6 +1285,8 @@ describe("import / export", () => {
     expect((await pg.getProject({ code: "PX" }))?.playbook).toBe("sdlc@1.0.0");
     expect(await pg.countUsers()).toBe(0);
     expect(await pg.listApiKeys()).toEqual([]);
+    expect("context" in (await pg.getProject({ code: "PX" }))!).toBe(false);
+    expect(await readFile(path.join((source as unknown as { store: { root: string } }).store.root, `projects/${(await pg.getProject({ code: "PX" }))!.id}.md`), "utf8")).toContain("context: personal");
 
     await expect(importInto(pg, source)).rejects.toThrow("not empty");
     const user = await pg.insertUser({ email: "pg@example.com", password_hash: "hash", created: "2026-09-27" });
@@ -1320,5 +1325,41 @@ describe("import / export", () => {
     expect(await exported.getPlaybookVersion("sdlc@1.1.0")).toEqual(await source.getPlaybookVersion("sdlc@1.1.0"));
     expect(await exported.countUsers()).toBe(0);
     expect(await exported.listApiKeys()).toEqual([]);
+  });
+});
+
+
+describe("PO-1.1 and PO-1.3", () => {
+  it("PO-1.1 createProject and updateProject have no context, loadWorkspace returns none", async () => {
+    const pg = await pglite();
+    setRepository(pg);
+    const p = await repo.createProject({ title: "PO11", code: "PO11" });
+    expect("context" in p).toBe(false);
+    const p2 = await repo.updateProject("PO11", { title: "PO11b" });
+    expect("context" in p2).toBe(false);
+    const l = await repo.loadWorkspace().then(w => w.projects);
+    expect(l.some(proj => "context" in proj)).toBe(false);
+  });
+
+  it("PO-1.3 a project file with a leftover context key loads, and loses the key on next write", async () => {
+    const dir = await tempDir();
+    const store = new FsStore(dir);
+    const fileRepo = new FileRepository(store);
+    setRepository(fileRepo);
+    await mkdir(path.join(dir, "projects"), { recursive: true });
+
+    const pid = newId();
+    await writeFile(
+      path.join(dir, "projects", `${pid}.md`),
+      `---\nid: ${pid}\ncode: PO13\ntitle: PO13\ncontext: legacy\ncreated: 2026-09-01\nrepos: []\ndetectors: []\n---\n\n`
+    );
+
+    const p = await repo.getProject("PO13");
+    expect(p).toBeDefined();
+    expect("context" in p!).toBe(false);
+    await repo.updateProject("PO13", { title: "Updated" });
+
+    const raw = await readFile(path.join(dir, "projects", `${pid}.md`), "utf8");
+    expect(raw).not.toContain("context:");
   });
 });
