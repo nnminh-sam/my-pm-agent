@@ -1,6 +1,6 @@
 # Personal projects only: data shapes
 
-Milestones: PMA-M17 · Updated: 2026-10-03
+Milestones: PMA-M17 · Updated: 2026-10-04
 
 The `context` property (`personal` / `company`) is dropped from project definitions. Every project behaves with full personal privileges (GitHub access, full playbook text).
 
@@ -65,22 +65,26 @@ In the Postgres database, `projects` table columns match `ProjectMeta` plus `bod
 
 ## Migration and guard
 
-A new database migration (`008_drop_project_context.sql`) drops the column. It includes a pre-check guard to ensure no `company` project silently converts to personal:
+A new database migration (`008_drop_project_context.sql`) drops the column. The migration runs only after the deploy, because the old code selects the column. It includes a pre-check guard to ensure no `company` project silently converts to personal:
 
 ```sql
+-- Drop the project context field (PMA-M17-T5) as the app is now for personal projects only.
+-- This migration runs only after the code that no longer reads `context` is deployed, because the old code selects that column.
+
 do $$
+declare
+  company_codes text;
 begin
-  if exists (select 1 from projects where context = 'company') then
-    raise exception 'Cannot drop projects.context: % company project(s) still exist (projects: %). Reassign or remove them first.',
-      (select count(*) from projects where context = 'company'),
-      (select string_agg(code, ', ') from projects where context = 'company');
+  select string_agg(code, ', ' order by code) into company_codes from projects where context = 'company';
+  if company_codes is not null then
+    raise exception 'projects % are still company; set their context to ''personal'' (or delete them) before running 008', company_codes;
   end if;
 end $$;
 
 alter table projects drop column context;
 ```
 
-If any project still has `context = 'company'`, the migration aborts immediately with an error, rolling back the transaction and leaving the database unchanged. Note that the guard is Postgres-only. On the file backend and in `db:import`, a leftover `context: company` is dropped like any unknown key, so that project becomes personal. No company project existed when this shipped (checked 2026-10-03).
+If any project still has `context = 'company'`, the migration aborts immediately with an error. The guard names the company projects in code order, and the error says how to fix it. Note that the guard is Postgres-only. On the file backend and in `db:import`, a leftover `context: company` is dropped like any unknown key, so that project becomes personal. No company project existed when this shipped (checked 2026-10-03).
 
 ## Leftover context on the file backend
 
